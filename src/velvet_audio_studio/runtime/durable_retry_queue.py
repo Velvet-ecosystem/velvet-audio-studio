@@ -6,6 +6,11 @@ import json
 from typing import Iterable
 
 from velvet_audio_studio.capture.supervisor import RuntimeAudioEvent
+from velvet_audio_studio.runtime.backlog_policy import (
+    BacklogHealth,
+    CompactionResult,
+    compact_backlog,
+)
 from velvet_audio_studio.runtime.publisher import DeliveryBatch, RuntimeEventPublisher
 from velvet_audio_studio.runtime.retry_journal import JsonlRetryJournal
 from velvet_audio_studio.runtime.retry_queue import OrderedRetryQueue, RetryQueueStatus
@@ -46,16 +51,32 @@ class DurableOrderedRetryQueue:
     def status(self) -> DurableRetryStatus:
         return DurableRetryStatus(self.queue.status, str(self.journal.path))
 
+    def health(
+        self,
+        *,
+        observed_at_monotonic_ns: int,
+        capacity_warning_ratio: float = 0.75,
+        max_age_ms: int = 30_000,
+    ) -> BacklogHealth:
+        return self.queue.health(
+            observed_at_monotonic_ns=observed_at_monotonic_ns,
+            capacity_warning_ratio=capacity_warning_ratio,
+            max_age_ms=max_age_ms,
+        )
+
     def enqueue(self, events: Iterable[RuntimeAudioEvent]) -> None:
         existing = {
             event_idempotency_key(event)
-            for event in self.journal.load()
+            for event in self.queue.snapshot()
         }
-        additions = [
-            event
-            for event in events
-            if event_idempotency_key(event) not in existing
-        ]
+        additions: list[RuntimeAudioEvent] = []
+        for event in events:
+            key = event_idempotency_key(event)
+            if key in existing:
+                continue
+            existing.add(key)
+            additions.append(event)
+
         self.queue.enqueue(additions)
         self._persist_pending()
 
@@ -64,7 +85,20 @@ class DurableOrderedRetryQueue:
         self._persist_pending()
         return batch
 
+    def compact_and_persist(self) -> CompactionResult:
+        """Compact eligible telemetry and atomically replace the durable journal.
+
+        The journal is replaced before the in-memory queue. If persistence fails,
+        the live queue remains untouched and may be retried safely.
+        """
+        original = self.queue.snapshot()
+        result = compact_backlog(original)
+        if result.events == original:
+            return result
+
+        self.journal.replace(result.events)
+        self.queue.replace(result.events)
+        return result
+
     def _persist_pending(self) -> None:
-        # OrderedRetryQueue intentionally keeps its storage private. Rebuild the
-        # durable view from a snapshot exposed specifically for persistence.
         self.journal.replace(self.queue.snapshot())
