@@ -11,6 +11,12 @@ from .alsa_capture import (
     AlsaPcmFormat,
     decode_interleaved_pcm,
 )
+from .capture_factory import (
+    OctoCaptureResolution,
+    OctoCaptureUnavailable,
+    resolve_octo_capture,
+    stable_alsa_pcm_name,
+)
 from .channel_map import DEFAULT_TIBURON_MAP, OctoChannelMap
 
 
@@ -54,6 +60,10 @@ __all__ = [
     "AlsaPcmFormat",
     "AudioInjectorOctoAdapter",
     "DEFAULT_TIBURON_MAP",
+    "OctoCaptureResolution",
+    "OctoCaptureUnavailable",
     "OctoChannelMap",
     "decode_interleaved_pcm",
+    "resolve_octo_capture",
+    "stable_alsa_pcm_name",
 ]
