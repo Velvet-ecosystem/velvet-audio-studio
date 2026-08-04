@@ -24,11 +24,12 @@ class PcmCapabilities:
 
 
 def _integers(text: str) -> tuple[int, ...]:
-    return tuple(sorted({int(value) for value in re.findall(r"\b\d{4,6}\b", text)}))
+    return tuple(sorted({int(value) for value in re.findall(r"\b\d+\b", text)}))
 
 
 def parse_hw_params(text: str, *, device: str, direction: str) -> PcmCapabilities:
-    channels = [int(value) for value in re.findall(r"CHANNELS:\s*(\d+)", text)]
+    channels_match = re.search(r"CHANNELS:\s*([^\n]+)", text)
+    channels = _integers(channels_match.group(1)) if channels_match else ()
     formats_match = re.search(r"FORMAT:\s*([^\n]+)", text)
     formats = tuple(formats_match.group(1).split()) if formats_match else ()
     rates_match = re.search(r"RATE:\s*([^\n]+)", text)
@@ -54,6 +55,19 @@ def parse_hw_params(text: str, *, device: str, direction: str) -> PcmCapabilitie
     )
 
 
+def _unavailable(device: str, direction: str, reason: str) -> PcmCapabilities:
+    return PcmCapabilities(
+        device=device,
+        direction=direction,
+        channels_min=None,
+        channels_max=None,
+        rates=(),
+        formats=(),
+        available=False,
+        degraded_reasons=(reason,),
+    )
+
+
 def probe_pcm(
     device: str,
     *,
@@ -65,34 +79,23 @@ def probe_pcm(
 
     executable = "aplay" if direction == "playback" else "arecord"
     if shutil.which(executable) is None:
-        return PcmCapabilities(
-            device=device,
-            direction=direction,
-            channels_min=None,
-            channels_max=None,
-            rates=(),
-            formats=(),
-            available=False,
-            degraded_reasons=(f"{executable} is not installed",),
-        )
+        return _unavailable(device, direction, f"{executable} is not installed")
 
-    result = runner(
-        [executable, "--dump-hw-params", "--device", device, "/dev/zero"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
-    )
-    combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
-    if not combined.strip():
-        return PcmCapabilities(
-            device=device,
-            direction=direction,
-            channels_min=None,
-            channels_max=None,
-            rates=(),
-            formats=(),
-            available=False,
-            degraded_reasons=(f"{executable} returned no capability data",),
+    sink = "/dev/zero" if direction == "playback" else "/dev/null"
+    try:
+        result = runner(
+            [executable, "--dump-hw-params", "--device", device, sink],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
         )
+        combined = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    except subprocess.TimeoutExpired as error:
+        stdout = error.stdout.decode() if isinstance(error.stdout, bytes) else (error.stdout or "")
+        stderr = error.stderr.decode() if isinstance(error.stderr, bytes) else (error.stderr or "")
+        combined = "\n".join(part for part in (stdout, stderr) if part)
+
+    if not combined.strip():
+        return _unavailable(device, direction, f"{executable} returned no capability data")
     return parse_hw_params(combined, device=device, direction=direction)
