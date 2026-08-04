@@ -5,6 +5,19 @@ studio:
   input_channels: 6
   output_channels: 8
 
+capture:
+  source: alsa_octo
+  identity_terms:
+    - audioinjector
+    - octo
+  pcm_device: 0
+  use_plughw: false
+  sample_rate_hz: 48000
+  sample_format: S32_LE
+  period_frames: 480
+  heartbeat_interval_ms: 5000
+  retry_journal: /var/lib/velvet-audio/runtime-retry.jsonl
+
 network:
   transport: ethernet
   runtime_endpoint: null
