@@ -169,6 +169,20 @@ class ReliablePublishedCapturePipeline:
         )
         return self._publish_cycle((), observed_at_monotonic_ns=observed_ns)
 
+    def publish_events(
+        self,
+        events: Sequence[RuntimeAudioEvent],
+        *,
+        observed_at_monotonic_ns: int | None = None,
+    ) -> ReliableRuntimeCycle:
+        """Publish non-capture service events through the same durable ordering path."""
+        observed_ns = (
+            monotonic_ns()
+            if observed_at_monotonic_ns is None
+            else observed_at_monotonic_ns
+        )
+        return self._publish_cycle(events, observed_at_monotonic_ns=observed_ns)
+
     def _publish_cycle(
         self,
         new_events: Sequence[RuntimeAudioEvent],
