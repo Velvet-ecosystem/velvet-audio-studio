@@ -16,6 +16,10 @@ CRITICAL_EVENTS = frozenset(
         "audio.capture.stopped",
         "audio.voice_input.ready",
         "audio.voice_input.degraded",
+        "audio.runtime_backlog.warning",
+        "audio.runtime_backlog.critical",
+        "audio.runtime_backlog.recovered",
+        "audio.runtime_backlog.compacted",
     }
 )
 
@@ -73,8 +77,9 @@ def assess_backlog(
 def compact_backlog(events: Sequence[RuntimeAudioEvent]) -> CompactionResult:
     """Collapse only consecutive capture packets within the same sequence region.
 
-    Lifecycle and voice-handoff events are never removed, reordered, or merged.
-    A packet run becomes one summary event located at the first packet's position.
+    Lifecycle, voice-handoff, and backlog-health events are never removed,
+    reordered, or merged. A packet run becomes one summary event located at the
+    first packet's position.
     """
     compacted: list[RuntimeAudioEvent] = []
     removed = 0
