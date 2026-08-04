@@ -1,0 +1,24 @@
+studio:
+  node_id: velvet-audio-pi3-01
+  host_adapter: raspberry_pi_3
+  hardware_adapter: audio_injector_octo
+  input_channels: 6
+  output_channels: 8
+
+network:
+  transport: ethernet
+  runtime_endpoint: null
+
+policy:
+  default_lease_seconds: 30
+  allow_direct_alsa_access: false
+  receipt_required: true
+  priorities:
+    ambience: 10
+    music: 20
+    media: 30
+    navigation: 50
+    call: 60
+    velvet_voice: 70
+    system_alert: 80
+    safety: 100
