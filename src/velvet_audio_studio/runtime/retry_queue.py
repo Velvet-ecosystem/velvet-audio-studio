@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from velvet_audio_studio.capture.supervisor import RuntimeAudioEvent
+from velvet_audio_studio.runtime.backlog_policy import (
+    BacklogHealth,
+    CompactionResult,
+    assess_backlog,
+    compact_backlog,
+)
 from velvet_audio_studio.runtime.publisher import DeliveryBatch, DeliveryReceipt, RuntimeEventPublisher
 
 
@@ -36,6 +42,34 @@ class OrderedRetryQueue:
     def snapshot(self) -> tuple[RuntimeAudioEvent, ...]:
         """Return an immutable ordered view for persistence and diagnostics."""
         return tuple(self._pending)
+
+    def health(
+        self,
+        *,
+        observed_at_monotonic_ns: int,
+        capacity_warning_ratio: float = 0.75,
+        max_age_ms: int = 30_000,
+    ) -> BacklogHealth:
+        return assess_backlog(
+            self.snapshot(),
+            max_pending=self.max_pending,
+            observed_at_monotonic_ns=observed_at_monotonic_ns,
+            capacity_warning_ratio=capacity_warning_ratio,
+            max_age_ms=max_age_ms,
+        )
+
+    def compact(self) -> CompactionResult:
+        """Safely summarize only eligible high-frequency packet events."""
+        result = compact_backlog(self.snapshot())
+        self._pending = deque(result.events)
+        return result
+
+    def replace(self, events: Iterable[RuntimeAudioEvent]) -> None:
+        """Replace the pending queue after validated restore or compaction."""
+        replacement = tuple(events)
+        if len(replacement) > self.max_pending:
+            raise OverflowError("replacement exceeds Runtime retry queue capacity")
+        self._pending = deque(replacement)
 
     def enqueue(self, events: Iterable[RuntimeAudioEvent]) -> None:
         for event in events:
