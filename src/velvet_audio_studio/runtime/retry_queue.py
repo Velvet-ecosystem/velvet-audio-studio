@@ -33,6 +33,10 @@ class OrderedRetryQueue:
             newest_packet_sequence=max(sequences) if sequences else None,
         )
 
+    def snapshot(self) -> tuple[RuntimeAudioEvent, ...]:
+        """Return an immutable ordered view for persistence and diagnostics."""
+        return tuple(self._pending)
+
     def enqueue(self, events: Iterable[RuntimeAudioEvent]) -> None:
         for event in events:
             if len(self._pending) >= self.max_pending:
