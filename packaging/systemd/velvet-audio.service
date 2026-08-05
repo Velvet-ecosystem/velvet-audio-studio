@@ -1,0 +1,48 @@
+[Unit]
+Description=Velvet Audio Studio
+Documentation=https://github.com/Velvet-ecosystem/velvet-audio-studio
+Wants=network-online.target
+After=network-online.target sound.target
+ConditionPathExists=/etc/velvet-audio/studio.yaml
+
+[Service]
+Type=simple
+User=velvet-audio
+Group=velvet-audio
+SupplementaryGroups=audio
+WorkingDirectory=/opt/velvet-audio-studio
+Environment=PYTHONUNBUFFERED=1
+
+ExecStartPre=/opt/velvet-audio-studio/.venv/bin/velvet-audio validate-config --config /etc/velvet-audio/studio.yaml
+ExecStart=/opt/velvet-audio-studio/.venv/bin/velvet-audio run --config /etc/velvet-audio/studio.yaml --runtime-mode configured
+
+Restart=on-failure
+RestartSec=2s
+RestartPreventExitStatus=2
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+
+StateDirectory=velvet-audio
+StateDirectoryMode=0750
+RuntimeDirectory=velvet-audio
+RuntimeDirectoryMode=0750
+UMask=0027
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
