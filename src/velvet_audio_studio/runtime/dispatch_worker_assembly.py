@@ -18,10 +18,11 @@ from velvet_audio_studio.runtime.dispatch_quarantine import (
 from velvet_audio_studio.runtime.dispatch_worker import (
     DispatchBackoffPolicy,
     DispatchWorkerEventSink,
-    PoisonEventClassifier,
     ExplicitPermanentFailureClassifier,
+    PoisonEventClassifier,
     RuntimeDispatchWorker,
 )
+from velvet_audio_studio.runtime.ingress_dispatch import IngressDispatchClaim
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,23 @@ class RuntimeDispatchWorkerAssembly:
     queue: QuarantinableIngressDispatchQueue
     handler: CourtRoutedIngressHandler
     worker: RuntimeDispatchWorker
+
+
+class FailClosedPoisonClassifier:
+    """Convert classifier faults into retryable, non-quarantine decisions."""
+
+    def __init__(self, classifier: PoisonEventClassifier) -> None:
+        self.classifier = classifier
+
+    def classify(
+        self,
+        claim: IngressDispatchClaim,
+        error: BaseException,
+    ) -> str | None:
+        try:
+            return self.classifier.classify(claim, error)
+        except Exception:
+            return None
 
 
 def build_runtime_dispatch_worker(
@@ -66,7 +84,7 @@ def build_runtime_dispatch_worker(
         heartbeat_interval_seconds=heartbeat_interval_seconds,
         idle_poll_seconds=idle_poll_seconds,
         backoff_policy=backoff_policy,
-        poison_classifier=poison_classifier,
+        poison_classifier=FailClosedPoisonClassifier(poison_classifier),
         quarantine_after_failures=quarantine_after_failures,
         event_sink=event_sink,
         clock_ns=monotonic_clock_ns,
