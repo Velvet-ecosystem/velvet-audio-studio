@@ -71,7 +71,7 @@ class IngressDispatchStats:
 
 
 class SqliteIngressDispatchQueue:
-    """Atomically leases accepted ingress events to one Runtime worker at a time."""
+    """Lease the oldest unprocessed ingress event to one worker at a time."""
 
     def __init__(
         self,
@@ -113,23 +113,30 @@ class SqliteIngressDispatchQueue:
                     acknowledgements.receipt_id,
                     acknowledgements.canonical_envelope,
                     acknowledgements.accepted_at_unix_ns,
+                    state.status,
+                    state.claim_token,
+                    state.lease_expires_at_unix_ns,
                     state.attempt_count
                 FROM event_dispatch_state AS state
                 JOIN event_acknowledgements AS acknowledgements
                   ON acknowledgements.idempotency_key = state.idempotency_key
                 WHERE state.status != 'processed'
-                  AND (
-                        state.claim_token IS NULL
-                        OR state.lease_expires_at_unix_ns <= ?
-                      )
                 ORDER BY
                     acknowledgements.accepted_at_unix_ns ASC,
                     state.idempotency_key ASC
                 LIMIT 1
-                """,
-                (observed_ns,),
+                """
             ).fetchone()
             if row is None:
+                connection.commit()
+                return None
+
+            if (
+                row[5] == IngressDispatchStatus.CLAIMED.value
+                and row[6] is not None
+                and row[7] is not None
+                and int(row[7]) > observed_ns
+            ):
                 connection.commit()
                 return None
 
@@ -141,10 +148,10 @@ class SqliteIngressDispatchQueue:
                     f"stored ingress envelope is invalid for {row[0]}: {exc}"
                 ) from exc
 
-            attempt_count = int(row[5]) + 1
+            attempt_count = int(row[8]) + 1
             expires_ns = observed_ns + lease_ns
             claim_token = _claim_token(
-                dispatch_id=row[1],
+                dispatch_id=str(row[1]),
                 worker_id=worker,
                 claimed_at_unix_ns=observed_ns,
                 attempt_count=attempt_count,
@@ -171,24 +178,21 @@ class SqliteIngressDispatchQueue:
             )
             connection.commit()
             return IngressDispatchClaim(
-                idempotency_key=row[0],
-                dispatch_id=row[1],
-                ingress_receipt_id=row[2],
+                idempotency_key=str(row[0]),
+                dispatch_id=str(row[1]),
+                ingress_receipt_id=str(row[2]),
                 claim_token=claim_token,
                 claimed_by=worker,
                 claimed_at_unix_ns=observed_ns,
                 lease_expires_at_unix_ns=expires_ns,
-                accepted_at_unix_ns=row[4],
+                accepted_at_unix_ns=int(row[4]),
                 attempt_count=attempt_count,
                 envelope=envelope,
             )
         except IngressDispatchError:
             raise
         except sqlite3.Error as exc:
-            try:
-                connection.rollback()
-            except sqlite3.Error:
-                pass
+            _rollback(connection)
             raise IngressDispatchError(f"dispatch claim transaction failed: {exc}") from exc
         finally:
             connection.close()
@@ -203,7 +207,7 @@ class SqliteIngressDispatchQueue:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT status, claim_token, lease_expires_at_unix_ns
+                SELECT status, lease_expires_at_unix_ns
                 FROM event_dispatch_state
                 WHERE claim_token = ?
                 """,
@@ -212,9 +216,8 @@ class SqliteIngressDispatchQueue:
             if (
                 row is None
                 or row[0] != IngressDispatchStatus.CLAIMED.value
-                or row[1] != token
-                or row[2] is None
-                or row[2] <= observed_ns
+                or row[1] is None
+                or int(row[1]) <= observed_ns
             ):
                 connection.rollback()
                 raise IngressClaimLostError("dispatch claim cannot be renewed")
@@ -231,10 +234,7 @@ class SqliteIngressDispatchQueue:
         except IngressClaimLostError:
             raise
         except sqlite3.Error as exc:
-            try:
-                connection.rollback()
-            except sqlite3.Error:
-                pass
+            _rollback(connection)
             raise IngressDispatchError(f"dispatch lease renewal failed: {exc}") from exc
         finally:
             connection.close()
@@ -255,7 +255,7 @@ class SqliteIngressDispatchQueue:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT idempotency_key, status, claim_token, lease_expires_at_unix_ns
+                SELECT idempotency_key, status, lease_expires_at_unix_ns
                 FROM event_dispatch_state
                 WHERE claim_token = ?
                 """,
@@ -264,14 +264,14 @@ class SqliteIngressDispatchQueue:
             if (
                 row is None
                 or row[1] != IngressDispatchStatus.CLAIMED.value
-                or row[2] != token
-                or row[3] is None
-                or row[3] <= observed_ns
+                or row[2] is None
+                or int(row[2]) <= observed_ns
             ):
                 connection.rollback()
                 raise IngressClaimLostError(
                     "dispatch completion rejected because the claim is no longer active"
                 )
+            key = str(row[0])
             connection.execute(
                 """
                 UPDATE event_dispatch_state
@@ -285,21 +285,18 @@ class SqliteIngressDispatchQueue:
                     downstream_receipt_id = ?
                 WHERE idempotency_key = ?
                 """,
-                (observed_ns, downstream_receipt, row[0]),
+                (observed_ns, downstream_receipt, key),
             )
             connection.commit()
         except IngressClaimLostError:
             raise
         except sqlite3.Error as exc:
-            try:
-                connection.rollback()
-            except sqlite3.Error:
-                pass
+            _rollback(connection)
             raise IngressDispatchError(f"dispatch completion failed: {exc}") from exc
         finally:
             connection.close()
 
-        record = self.get(row[0])
+        record = self.get(key)
         if record is None:
             raise IngressDispatchError("processed dispatch record disappeared after commit")
         return record
@@ -312,21 +309,18 @@ class SqliteIngressDispatchQueue:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT idempotency_key, status, claim_token
+                SELECT idempotency_key, status
                 FROM event_dispatch_state
                 WHERE claim_token = ?
                 """,
                 (token,),
             ).fetchone()
-            if (
-                row is None
-                or row[1] != IngressDispatchStatus.CLAIMED.value
-                or row[2] != token
-            ):
+            if row is None or row[1] != IngressDispatchStatus.CLAIMED.value:
                 connection.rollback()
                 raise IngressClaimLostError(
                     "dispatch failure cannot release a claim owned by another worker"
                 )
+            key = str(row[0])
             connection.execute(
                 """
                 UPDATE event_dispatch_state
@@ -338,21 +332,18 @@ class SqliteIngressDispatchQueue:
                     last_error = ?
                 WHERE idempotency_key = ?
                 """,
-                (error_text, row[0]),
+                (error_text, key),
             )
             connection.commit()
         except IngressClaimLostError:
             raise
         except sqlite3.Error as exc:
-            try:
-                connection.rollback()
-            except sqlite3.Error:
-                pass
+            _rollback(connection)
             raise IngressDispatchError(f"dispatch release failed: {exc}") from exc
         finally:
             connection.close()
 
-        record = self.get(row[0])
+        record = self.get(key)
         if record is None:
             raise IngressDispatchError("released dispatch record disappeared after commit")
         return record
@@ -409,7 +400,7 @@ class SqliteIngressDispatchQueue:
                 ).fetchone()
         except sqlite3.Error as exc:
             raise IngressDispatchError(f"dispatch stats failed: {exc}") from exc
-        counts = {status: int(count) for status, count in rows}
+        counts = {str(status): int(count) for status, count in rows}
         return IngressDispatchStats(
             pending=counts.get(IngressDispatchStatus.PENDING.value, 0),
             claimed=counts.get(IngressDispatchStatus.CLAIMED.value, 0),
@@ -419,8 +410,8 @@ class SqliteIngressDispatchQueue:
 
     def _clock(self) -> int:
         observed_ns = self.clock_ns()
-        if observed_ns < 0:
-            raise ValueError("dispatch clock cannot return a negative value")
+        if isinstance(observed_ns, bool) or not isinstance(observed_ns, int) or observed_ns < 0:
+            raise ValueError("dispatch clock must return a non-negative integer")
         return observed_ns
 
     def _connect(self) -> sqlite3.Connection:
@@ -469,7 +460,7 @@ class DispatchCycleResult:
 
 
 class DurableIngressDispatcher:
-    """Claims ingress events and completes them only after downstream acknowledgement."""
+    """Complete ingress only after Court or routing returns a durable receipt."""
 
     def __init__(
         self,
@@ -534,7 +525,11 @@ class DurableIngressDispatcher:
             downstream_receipt_id=downstream_receipt,
         )
 
-    def drain_available(self, *, max_events: int | None = None) -> tuple[DispatchCycleResult, ...]:
+    def drain_available(
+        self,
+        *,
+        max_events: int | None = None,
+    ) -> tuple[DispatchCycleResult, ...]:
         if max_events is not None and max_events < 0:
             raise ValueError("max_events must be non-negative")
         results: list[DispatchCycleResult] = []
@@ -577,7 +572,11 @@ def _claim_token(
 
 
 def _lease_nanoseconds(lease_seconds: float) -> int:
-    if isinstance(lease_seconds, bool) or lease_seconds <= 0:
+    if (
+        isinstance(lease_seconds, bool)
+        or not isinstance(lease_seconds, (int, float))
+        or lease_seconds <= 0
+    ):
         raise ValueError("lease_seconds must be positive")
     lease_ns = int(float(lease_seconds) * 1_000_000_000)
     if lease_ns <= 0:
@@ -589,3 +588,10 @@ def _nonempty(value: object, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
     return value.strip()
+
+
+def _rollback(connection: sqlite3.Connection) -> None:
+    try:
+        connection.rollback()
+    except sqlite3.Error:
+        pass
