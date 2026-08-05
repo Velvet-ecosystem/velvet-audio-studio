@@ -25,7 +25,7 @@ The oldest unprocessed event is the dispatch gate.
 - If it is pending, a worker may claim it.
 - If it has a live claim, every later event waits.
 - If its claim expired, another worker may reclaim the same event.
-- Only after it is marked processed may the next event be claimed.
+- Only after it is marked processed or explicitly quarantined may the next event be claimed.
 
 This prevents a later `audio.capture.recovered` event from passing an earlier `audio.capture.degraded` event.
 
@@ -55,7 +55,9 @@ Failed handlers release their claim back to `pending` and preserve a bounded err
 : Temporarily leased to one worker. A live oldest claim blocks later events.
 
 `processed`
-: Court denial or approved routing returned a durable receipt and the dispatcher committed it.
+: Court denial, approved routing, or explicit quarantine returned a durable terminal receipt and the dispatcher committed it.
+
+Quarantine remains distinguishable through `event_dispatch_quarantine` and its `runtime-quarantine-*` receipt. It is not represented as an organ success.
 
 The database also preserves the last failure, processed time, final downstream receipt, and total attempts.
 
@@ -113,23 +115,39 @@ A completed approved event has evidence at each boundary:
 
 A denied event ends at step 2 with its durable Court denial receipt.
 
+An explicitly quarantined event ends with a separate `runtime-quarantine-*` receipt that links the stable dispatch ID, repeated failure fingerprint, reason, and evidence count. It does not impersonate Court approval or organ completion.
+
 The dispatch table stores the final receipt. Court and routing implementations remain responsible for preserving their own detailed receipt ledgers and linking them through `dispatch_id`.
 
 ## Failure evidence
 
-The dispatcher distinguishes:
+The worker distinguishes:
 
 - `idle`: no event is currently claimable
 - `processed`: final downstream receipt committed
 - `retry`: handler failed and the claim returned to pending
+- `quarantined`: repeated explicitly permanent evidence was isolated with a receipt
 - `claim_lost`: the worker returned after its lease or authority expired
+- `error`: dispatch infrastructure failed
 
 A `claim_lost` result after a downstream receipt does not mean downstream work failed. It means the dispatcher could not safely prove completion. The event will be retried with the same dispatch ID, and downstream deduplication must return the existing receipt.
+
+Generic repeated failures never authorize quarantine. The default worker classifier requires an explicit `PermanentDispatchError`, then requires the same failure fingerprint to reach the configured threshold.
 
 ## Migration behavior
 
 Opening an older acknowledgement database creates dispatch state for every existing ingress row. Those rows begin as `pending`, retain their original ingress receipts, and receive dispatch IDs derived by the same rule used for new events.
 
+Opening the quarantine-capable queue adds failure-evidence and quarantine tables without changing existing ingress or dispatch identities.
+
+## Long-running worker
+
+`RuntimeDispatchWorker` provides continuous polling, bounded retry backoff, lease renewal during slow Court or route work, observational health events, graceful stop handling, and conservative quarantine.
+
+`build_runtime_dispatch_worker` assembles the queue and `CourtRoutedIngressHandler` around Runtime's real Court and router implementations. It supplies no placeholder authority.
+
+Detailed worker operation is documented in `runtime_dispatch_worker.md`.
+
 ## Current boundary
 
-The durable queue, lease model, strict ordering, migration path, and Court/router adapter are implemented. The repository does not grant physical authority or provide a substitute Court policy. Final Velvet Runtime integration must supply the real Court gate, capability vocabulary, routing policy, and organ receipt adapters behind these contracts.
+The durable queue, lease model, strict ordering, migration path, Court/router adapter, long-running worker, and evidence-backed quarantine are implemented. The repository does not grant physical authority or provide a substitute Court policy. Final Velvet Runtime integration must supply the real Court gate, capability vocabulary, routing policy, organ receipt adapters, and production worker service wiring behind these contracts.
