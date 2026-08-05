@@ -49,19 +49,35 @@ def test_repeated_bad_packets_do_not_spam_degraded_transitions() -> None:
 
 
 def test_invalid_lifecycle_actions_are_rejected() -> None:
-    session = CaptureSession()
+    idle = CaptureSession()
 
     try:
-        session.stop()
+        idle.observe(packet((0.1, 0.0, 0.0, 0.0, 0.0, 0.0)))
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("processing before start must fail")
+
+    try:
+        idle.stop()
     except RuntimeError:
         pass
     else:
         raise AssertionError("stopping an idle session must fail")
 
-    session.start()
+    running = CaptureSession()
+    running.start()
     try:
-        session.start()
+        running.start()
     except RuntimeError:
         pass
     else:
-        raise AssertionError("starting an active session must fail")
+        raise AssertionError("starting a running session must fail")
+
+    running.stop()
+    try:
+        running.stop()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("stopping a session twice must fail")
