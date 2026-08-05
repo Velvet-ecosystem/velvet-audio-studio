@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
 from time import monotonic_ns, sleep
 from typing import Callable
 
@@ -48,6 +47,7 @@ class AudioServiceAssembly:
 
     def describe(self) -> dict[str, object]:
         resolution = self.capture_resolution
+        network = self.config.network
         return {
             "node_id": self.config.studio.node_id,
             "capture_source": self.config.capture.source,
@@ -55,8 +55,15 @@ class AudioServiceAssembly:
             "sample_format": self.config.capture.sample_format.value,
             "period_frames": self.config.capture.period_frames,
             "retry_journal": str(self.config.capture.retry_journal),
-            "runtime_transport": self.config.network.transport,
-            "runtime_endpoint": self.config.network.runtime_endpoint,
+            "network_transport": network.transport,
+            "event_protocol_transport": network.event_protocol_transport,
+            "runtime_endpoint": network.runtime_endpoint,
+            "request_timeout_seconds": network.request_timeout_seconds,
+            "bearer_token_file": (
+                str(network.bearer_token_file)
+                if network.bearer_token_file is not None
+                else None
+            ),
             "octo_accepted": resolution.accepted if resolution is not None else None,
             "alsa_device": (
                 resolution.config.device
