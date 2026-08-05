@@ -125,7 +125,7 @@ class SqliteAcknowledgementStore:
         canonical = encode_event_protocol_envelope(envelope)
         envelope_digest = sha256(canonical).hexdigest()
         receipt_id = _receipt_id(key)
-        dispatch_id = _dispatch_id(key)
+        dispatch_id = _dispatch_id(receipt_id)
         observed_ns = self.clock_ns()
         if observed_ns < 0:
             raise ValueError("acknowledgement clock cannot return a negative value")
@@ -310,6 +310,8 @@ def _receipt_id(idempotency_key: str) -> str:
     return f"runtime-receipt-{digest[:32]}"
 
 
-def _dispatch_id(idempotency_key: str) -> str:
-    digest = sha256(f"velvet-dispatch:{idempotency_key}".encode("utf-8")).hexdigest()
-    return f"runtime-dispatch-{digest[:32]}"
+def _dispatch_id(receipt_id: str) -> str:
+    prefix = "runtime-receipt-"
+    if not receipt_id.startswith(prefix):
+        raise ValueError("Runtime receipt ID cannot seed a dispatch identity")
+    return "runtime-dispatch-" + receipt_id[len(prefix) :]
