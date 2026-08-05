@@ -9,7 +9,10 @@ from velvet_audio_studio.runtime.court_routing import (
     CourtDecision,
     CourtDisposition,
 )
-from velvet_audio_studio.runtime.dispatch_worker import DispatchWorkerCycleState
+from velvet_audio_studio.runtime.dispatch_worker import (
+    DispatchWorkerCycleState,
+    PermanentDispatchError,
+)
 from velvet_audio_studio.runtime.dispatch_worker_assembly import (
     build_runtime_dispatch_worker,
 )
@@ -39,6 +42,18 @@ class ApprovingCourt:
         )
 
 
+class FailingCourt:
+    def decide(
+        self,
+        envelope: EventProtocolEnvelope,
+        *,
+        dispatch_id: str,
+        ingress_receipt_id: str,
+    ) -> CourtDecision:
+        del envelope, dispatch_id, ingress_receipt_id
+        raise PermanentDispatchError("unsupported fixed event")
+
+
 class ReceiptRouter:
     def __init__(self) -> None:
         self.dispatch_ids: list[str] = []
@@ -57,8 +72,13 @@ class ReceiptRouter:
         return "organ-receipt-1"
 
 
-def test_assembly_uses_ingress_database_and_routes_through_court(tmp_path: Path) -> None:
-    database = tmp_path / "runtime.sqlite3"
+class ExplodingPoisonClassifier:
+    def classify(self, claim: object, error: BaseException) -> str | None:
+        del claim, error
+        raise RuntimeError("classifier implementation failed")
+
+
+def _accept_one(database: Path) -> None:
     envelope = EventProtocolEnvelope(
         event_type="audio.voice_input.ready",
         source_id="octo.capture.primary",
@@ -71,6 +91,11 @@ def test_assembly_uses_ingress_database_and_routes_through_court(tmp_path: Path)
         key,
         envelope,
     )
+
+
+def test_assembly_uses_ingress_database_and_routes_through_court(tmp_path: Path) -> None:
+    database = tmp_path / "runtime.sqlite3"
+    _accept_one(database)
     court = ApprovingCourt()
     router = ReceiptRouter()
     assembly = build_runtime_dispatch_worker(
@@ -89,3 +114,24 @@ def test_assembly_uses_ingress_database_and_routes_through_court(tmp_path: Path)
     assert court.dispatch_ids == [result.claim.dispatch_id]
     assert router.dispatch_ids == [result.claim.dispatch_id]
     assert result.downstream_receipt_id == "organ-receipt-1"
+
+
+def test_assembly_classifier_fault_cannot_authorize_quarantine(tmp_path: Path) -> None:
+    database = tmp_path / "runtime.sqlite3"
+    _accept_one(database)
+    assembly = build_runtime_dispatch_worker(
+        database,
+        FailingCourt(),
+        ReceiptRouter(),
+        worker_id="runtime-worker-1",
+        poison_classifier=ExplodingPoisonClassifier(),
+        quarantine_after_failures=1,
+        wall_clock_ns=lambda: 2_000,
+    )
+
+    result = assembly.worker.run_cycle()
+
+    assert result.state is DispatchWorkerCycleState.RETRY
+    assert result.failure_evidence is not None
+    assert result.failure_evidence.poison_reason is None
+    assert assembly.queue.quarantined_count() == 0
