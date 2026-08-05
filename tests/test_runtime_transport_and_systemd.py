@@ -159,3 +159,19 @@ def test_systemd_unit_preserves_alsa_and_orders_shutdown() -> None:
     assert "RestartPreventExitStatus=2" in unit
     assert "PrivateDevices=true" not in unit
     assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" in unit
+
+
+def test_runtime_receiver_unit_isolated_and_durable() -> None:
+    unit = Path("packaging/systemd/velvet-runtime-receiver.service").read_text(
+        encoding="utf-8"
+    )
+
+    assert "velvet-audio serve-runtime" in unit
+    assert "--database /var/lib/velvet-runtime-receiver/acknowledgements.sqlite3" in unit
+    assert "--bearer-token-file /etc/velvet-runtime-receiver/runtime.token" in unit
+    assert "StateDirectory=velvet-runtime-receiver" in unit
+    assert "PrivateDevices=true" in unit
+    assert "KillSignal=SIGTERM" in unit
+    assert "RestartPreventExitStatus=2" in unit
+    assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" in unit
+    assert "SupplementaryGroups=audio" not in unit
