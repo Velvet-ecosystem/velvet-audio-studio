@@ -41,7 +41,7 @@ def test_supervisor_publishes_start_packet_active_and_handoff_events() -> None:
     assert result.events[0].payload["channels"][0]["logical_name"] == "driver_upper_mic"
 
 
-def test_supervisor_reports_degradation_and_recovers_after_two_packets() -> None:
+def test_supervisor_gates_handoff_until_two_packet_recovery_completes() -> None:
     supervisor = CaptureSupervisor(recovery_packets_required=2)
     supervisor.start(occurred_at_monotonic_ns=1_000_000_000)
     supervisor.process(
@@ -50,8 +50,22 @@ def test_supervisor_reports_degradation_and_recovers_after_two_packets() -> None
         observed_at_monotonic_ns=1_020_000_000,
     )
 
+    clipped_with_other_healthy_mics = (
+        0.99,
+        0.20,
+        0.10,
+        0.0,
+        0.0,
+        0.0,
+        -0.99,
+        -0.20,
+        -0.10,
+        0.0,
+        0.0,
+        0.0,
+    )
     degraded = supervisor.process(
-        (0.99, 0.0, 0.0, 0.0, 0.0, 0.0),
+        clipped_with_other_healthy_mics,
         captured_at_monotonic_ns=1_030_000_000,
         observed_at_monotonic_ns=1_040_000_000,
     )
@@ -66,11 +80,28 @@ def test_supervisor_reports_degradation_and_recovers_after_two_packets() -> None
         observed_at_monotonic_ns=1_080_000_000,
     )
 
-    assert "audio.capture.degraded" in [event.event for event in degraded.events]
-    assert degraded.handoff.event == "audio.voice_input.ready"
-    assert "audio.capture.recovered" not in [event.event for event in first_recovery.events]
-    assert "audio.capture.recovered" in [event.event for event in recovered.events]
     assert supervisor.session.state is CaptureSessionState.ACTIVE
+    assert "audio.capture.degraded" in [event.event for event in degraded.events]
+    assert degraded.handoff.event == "audio.voice_input.degraded"
+    assert degraded.handoff.selected_channel_index is None
+    assert degraded.handoff.mono_samples == ()
+    assert degraded.handoff.raw_multichannel_samples == clipped_with_other_healthy_mics
+    assert degraded.handoff.confidence == 0.0
+    assert "capture session awaiting recovery" in degraded.handoff.degraded_reasons
+
+    assert "audio.capture.recovered" not in [
+        event.event for event in first_recovery.events
+    ]
+    assert first_recovery.handoff.event == "audio.voice_input.degraded"
+    assert first_recovery.handoff.mono_samples == ()
+    assert "capture session awaiting recovery" in (
+        first_recovery.handoff.degraded_reasons
+    )
+
+    assert "audio.capture.recovered" in [event.event for event in recovered.events]
+    assert recovered.handoff.event == "audio.voice_input.ready"
+    assert recovered.handoff.selected_logical_name == "driver_upper_mic"
+    assert recovered.handoff.mono_samples
 
 
 def test_supervisor_refuses_stale_audio_and_publishes_degraded_handoff() -> None:
