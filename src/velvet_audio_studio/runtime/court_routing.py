@@ -22,13 +22,19 @@ class CourtDecision:
     reason: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.disposition, CourtDisposition):
+            raise TypeError("Court disposition must be CourtDisposition")
         receipt = _nonempty(self.court_receipt_id, "court_receipt_id")
         object.__setattr__(self, "court_receipt_id", receipt)
         if self.disposition is CourtDisposition.APPROVED:
             capability = _nonempty(self.capability, "approved Court capability")
             object.__setattr__(self, "capability", capability)
-            if self.reason is not None and not self.reason.strip():
-                raise ValueError("Court approval reason cannot be empty when provided")
+            if self.reason is not None:
+                object.__setattr__(
+                    self,
+                    "reason",
+                    _nonempty(self.reason, "Court approval reason"),
+                )
         else:
             reason = _nonempty(self.reason, "Court denial reason")
             object.__setattr__(self, "reason", reason)
