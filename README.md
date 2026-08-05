@@ -83,11 +83,29 @@ Runtime modes:
 
 SIGINT and SIGTERM request an orderly shutdown. Capture closes first, stop events are generated in order, final delivery is attempted, and anything unacknowledged remains durable.
 
+## Reference Runtime receiver
+
+A small Runtime-side receiver is included for vehicle-LAN integration tests and durable-ingress development:
+
+```bash
+velvet-audio serve-runtime \
+  --host 0.0.0.0 \
+  --port 8765 \
+  --database /var/lib/velvet-runtime-receiver/acknowledgements.sqlite3 \
+  --bearer-token-file /etc/velvet-runtime-receiver/runtime.token
+```
+
+The receiver validates the envelope and idempotency headers, durably stores canonical event bytes in SQLite, returns `202` for a new event, and returns `409` with the original receipt for an exact replay. A receipt proves durable ingress acceptance, not completed downstream Court or organ processing.
+
+Receiver deployment and trust boundaries are documented in `docs/runtime_receiver_deployment.md`. The HTTP sender and acknowledgement contract is in `docs/runtime_http_contract.md`.
+
 ## systemd
 
-The hardened unit is in `packaging/systemd/velvet-audio.service`. It validates configuration before launch, uses a dedicated `velvet-audio` account with supplementary ALSA access through the `audio` group, stores durable state in `/var/lib/velvet-audio`, and restarts on operational failure without looping on invalid configuration.
+The hardened audio unit is in `packaging/systemd/velvet-audio.service`. It validates configuration before launch, uses a dedicated `velvet-audio` account with supplementary ALSA access through the `audio` group, stores durable state in `/var/lib/velvet-audio`, and restarts on operational failure without looping on invalid configuration.
 
-Installation steps are in `packaging/systemd/README.md`.
+The reference Runtime receiver unit is in `packaging/systemd/velvet-runtime-receiver.service`. It has no device access and writes only to its managed acknowledgement state directory.
+
+Audio-node installation steps are in `packaging/systemd/README.md`.
 
 ## Status
 
