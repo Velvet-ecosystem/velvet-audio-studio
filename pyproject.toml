@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "velvet-audio-studio"
 version = "0.1.0"
 description = "Velvet's shared multichannel audio studio"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0",
 ]
