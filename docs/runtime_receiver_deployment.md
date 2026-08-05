@@ -1,6 +1,6 @@
 # Runtime receiver deployment
 
-The repository includes a reference Runtime-side Event Protocol receiver. It is intended for vehicle-LAN integration tests and for proving durable acknowledgement semantics before the final Velvet Runtime ingress adapter is connected.
+The repository includes a reference Runtime-side Event Protocol receiver. It is intended for vehicle-LAN integration tests and for proving durable acknowledgement and dispatch semantics before the final Velvet Runtime adapters are connected.
 
 The receiver performs five jobs:
 
@@ -10,7 +10,9 @@ The receiver performs five jobs:
 4. durably stores the canonical envelope and receipt in SQLite
 5. returns `202 Accepted` for a new event or `409 Conflict` with the same receipt for a replay
 
-A receiver receipt means the event has durably landed in the ingress database. It does not claim that every downstream Runtime consumer has processed the event. Final Court, routing, capability, and organ-dispatch integration remains a separate Runtime responsibility.
+A receiver receipt means the event has durably landed in the ingress database. It does not claim that Court, routing, or an organ has processed the event.
+
+The same SQLite transaction also creates a pending dispatch row with a stable `runtime-dispatch-*` identity. Runtime workers can later claim that row through `SqliteIngressDispatchQueue` without a gap between acceptance and dispatch eligibility.
 
 ## Local launch
 
@@ -47,23 +49,47 @@ A ready receiver returns:
 {"accepted_events":12,"endpoint_path":"/v1/events","status":"ready"}
 ```
 
+The current health response reports durable ingress acceptance. Dispatch state is available through `SqliteIngressDispatchQueue.stats()` and will be folded into the final Runtime health surface when the real Court worker is assembled.
+
 ## Durable acknowledgement database
 
-The SQLite ledger uses WAL mode and synchronous durable writes. Each row records:
+The SQLite ledger uses WAL mode and synchronous durable writes. Each acknowledgement row records:
 
 - the canonical idempotency key
 - the SHA-256 digest of the canonical envelope
-- the stable Runtime receipt identifier
+- the stable Runtime ingress receipt identifier
 - event type, source, sequence, and monotonic occurrence time
 - the canonical envelope bytes
 - first accepted and last replay timestamps
 - duplicate replay count
 
+The same database stores dispatch state:
+
+- stable dispatch ID
+- pending, claimed, or processed status
+- worker and claim token
+- lease timestamps
+- attempt count and last error
+- processed time
+- final Court denial, route, or organ receipt
+
 The same idempotency key presented with different canonical envelope bytes is rejected as a conflict. Duplicate delivery of the same event increments the replay count and returns the original receipt.
+
+Opening an acknowledgement database created before dispatch support automatically backfills pending dispatch state for every existing event. Original ingress receipts remain unchanged.
+
+## Dispatch ordering and Court
+
+The oldest unprocessed event is the dispatch gate. A live claim blocks every later event, preserving the order in which Runtime durably accepted evidence.
+
+Expired claims may be reclaimed. The stable dispatch ID does not change, allowing Court and routers to deduplicate retries after timeout or process death.
+
+`CourtRoutedIngressHandler` places a durable Court decision before routing. Approved events carry a bounded capability to the router. Durable denials complete with their Court denial receipt and never reach routing.
+
+The full claim, lease, receipt, migration, and crash-gap doctrine is in `docs/runtime_ingress_dispatch.md`.
 
 ## systemd installation
 
-The reference unit is `packaging/systemd/velvet-runtime-receiver.service`.
+The reference receiver unit is `packaging/systemd/velvet-runtime-receiver.service`.
 
 Example installation:
 
@@ -76,7 +102,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now velvet-runtime-receiver.service
 ```
 
-The unit binds to port `8765`, writes acknowledgements only inside `/var/lib/velvet-runtime-receiver`, uses a read-only application tree, has no device access, and shuts down through SIGTERM.
+The unit binds to port `8765`, writes acknowledgements and dispatch state only inside `/var/lib/velvet-runtime-receiver`, uses a read-only application tree, has no device access, and shuts down through SIGTERM.
 
 ## Audio-node configuration
 
