@@ -57,7 +57,9 @@ class AudioServiceConfig:
 
     def with_capture_source(self, source: str) -> AudioServiceConfig:
         normalized = _capture_source(source)
-        return replace(self, capture=replace(self.capture, source=normalized))
+        capture = replace(self.capture, source=normalized)
+        _validate_cross_section(self.studio, capture)
+        return replace(self, capture=capture)
 
 
 def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
@@ -104,8 +106,6 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
         _nonempty_text(term, f"capture.identity_terms[{index}]")
         for index, term in enumerate(identity_terms_raw)
     )
-    if source == "alsa_octo" and not identity_terms:
-        raise AudioServiceConfigError("capture.identity_terms cannot be empty for alsa_octo")
 
     format_text = _nonempty_text(
         capture_raw.get("sample_format", AlsaPcmFormat.S32_LE.value),
@@ -189,6 +189,10 @@ def _validate_cross_section(
     capture: CaptureServiceConfig,
 ) -> None:
     if capture.source == "alsa_octo":
+        if not capture.identity_terms:
+            raise AudioServiceConfigError(
+                "capture.identity_terms cannot be empty for alsa_octo"
+            )
         if studio.input_channels != 6:
             raise AudioServiceConfigError(
                 "Audio Injector Octo capture requires studio.input_channels to equal 6"
