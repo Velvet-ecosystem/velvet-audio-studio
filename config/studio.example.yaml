@@ -24,7 +24,11 @@ capture:
 
 network:
   transport: ethernet
+  event_protocol_transport: stdout
   runtime_endpoint: null
+  request_timeout_seconds: 2.0
+  bearer_token_file: null
+  max_response_bytes: 65536
 
 policy:
   default_lease_seconds: 30
