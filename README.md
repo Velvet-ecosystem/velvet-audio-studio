@@ -9,6 +9,7 @@ This repository owns studio booking, channel leases, routing, mixing policy, pri
 - Raspberry Pi 3
 - Audio Injector Octo
 - Ethernet connection to Velvet Runtime
+- Python 3.11 or newer
 
 ## Core rule
 
