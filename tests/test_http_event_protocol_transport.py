@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from email.message import Message
 from io import BytesIO
-import json
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -190,16 +189,14 @@ def test_endpoint_rejects_embedded_credentials() -> None:
         HttpEventProtocolTransport("http://user:secret@runtime.local/v1/events")
 
 
-def test_empty_token_file_fails_without_leaking_event() -> None:
-    token_path = Path("/tmp/velvet-audio-empty-token-test")
-    try:
-        token_path.write_text("\n", encoding="utf-8")
-        transport = HttpEventProtocolTransport(
-            "http://runtime.local/v1/events",
-            bearer_token_file=token_path,
-            opener=lambda request, timeout: FakeResponse(),
-        )
-        with pytest.raises(EventProtocolHttpError, match="token file is empty"):
-            transport.publish_envelope(_envelope())
-    finally:
-        token_path.unlink(missing_ok=True)
+def test_empty_token_file_fails_without_leaking_event(tmp_path: Path) -> None:
+    token_path = tmp_path / "empty-runtime.token"
+    token_path.write_text("\n", encoding="utf-8")
+    transport = HttpEventProtocolTransport(
+        "http://runtime.local/v1/events",
+        bearer_token_file=token_path,
+        opener=lambda request, timeout: FakeResponse(),
+    )
+
+    with pytest.raises(EventProtocolHttpError, match="token file is empty"):
+        transport.publish_envelope(_envelope())
