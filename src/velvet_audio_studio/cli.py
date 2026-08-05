@@ -1,28 +1,173 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 
 from velvet_audio_studio.adapters.alsa.capability_probe import probe_pcm
+from velvet_audio_studio.adapters.audio_injector_octo.capture_factory import (
+    OctoCaptureUnavailable,
+)
 from velvet_audio_studio.diagnostics.probe import probe_json
+from velvet_audio_studio.runtime.event_protocol import EventProtocolPublisher
+from velvet_audio_studio.runtime.local_transport import (
+    JsonlEventProtocolTransport,
+    UnavailableRuntimePublisher,
+)
+from velvet_audio_studio.runtime.retry_journal import RetryJournalError
+from velvet_audio_studio.service_assembly import build_audio_service
+from velvet_audio_studio.service_config import (
+    AudioServiceConfig,
+    AudioServiceConfigError,
+    load_audio_service_config,
+)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = _parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "probe":
+            print(probe_json())
+            return 0
+        if args.command == "probe-pcm":
+            print(probe_pcm(args.device, direction=args.direction).to_json())
+            return 0
+        if args.command == "validate-config":
+            config = load_audio_service_config(args.config)
+            if args.source is not None:
+                config = config.with_capture_source(args.source)
+            print(json.dumps(_config_summary(config), indent=2, sort_keys=True))
+            return 0
+        if args.command == "run":
+            return _run_service(args)
+    except (AudioServiceConfigError, OctoCaptureUnavailable, RetryJournalError) as exc:
+        print(f"velvet-audio: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("velvet-audio: shutdown requested", file=sys.stderr)
+        return 130
+    return 2
+
+
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="velvet-audio")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("probe", help="Inspect host and Audio Injector Octo presence")
 
     pcm_parser = subparsers.add_parser("probe-pcm", help="Inspect ALSA PCM capabilities")
-    pcm_parser.add_argument("--device", required=True, help="ALSA device, for example hw:CARD=audioinjectoroc")
-    pcm_parser.add_argument("--direction", required=True, choices=("playback", "capture"))
+    pcm_parser.add_argument(
+        "--device",
+        required=True,
+        help="ALSA device, for example hw:CARD=audioinjectoroc,DEV=0",
+    )
+    pcm_parser.add_argument(
+        "--direction",
+        required=True,
+        choices=("playback", "capture"),
+    )
 
-    args = parser.parse_args()
-    if args.command == "probe":
-        print(probe_json())
+    validate_parser = subparsers.add_parser(
+        "validate-config",
+        help="Parse and validate service YAML without opening hardware",
+    )
+    _add_config_arguments(validate_parser)
+
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Assemble and run the durable audio capture service",
+    )
+    _add_config_arguments(run_parser)
+    run_parser.add_argument(
+        "--runtime-mode",
+        choices=("stdout", "unavailable"),
+        default="stdout",
+        help=(
+            "stdout emits Event Protocol JSONL; unavailable deliberately retains "
+            "all events in the retry journal"
+        ),
+    )
+    run_parser.add_argument(
+        "--max-iterations",
+        type=_nonnegative_integer,
+        default=None,
+        help="Stop after this many capture polls; omitted means run until interrupted",
+    )
+    run_parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Resolve the configured source and print the assembly plan without booting",
+    )
+    return parser
+
+
+def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config",
+        default="config/studio.example.yaml",
+        help="Path to the audio service YAML configuration",
+    )
+    parser.add_argument(
+        "--source",
+        choices=("simulated", "alsa_octo"),
+        default=None,
+        help="Override capture.source from the YAML file",
+    )
+
+
+def _run_service(args: argparse.Namespace) -> int:
+    config = load_audio_service_config(args.config)
+    if args.source is not None:
+        config = config.with_capture_source(args.source)
+
+    if args.runtime_mode == "stdout":
+        publisher = EventProtocolPublisher(JsonlEventProtocolTransport(sys.stdout))
+    else:
+        publisher = UnavailableRuntimePublisher()
+
+    assembly = build_audio_service(config, publisher)
+    if args.plan:
+        print(json.dumps(assembly.describe(), indent=2, sort_keys=True, default=str))
         return 0
-    if args.command == "probe-pcm":
-        print(probe_pcm(args.device, direction=args.direction).to_json())
-        return 0
-    return 2
+
+    result = assembly.runner.run(max_iterations=args.max_iterations)
+    summary = {
+        "node_id": config.studio.node_id,
+        "iterations": len(result.iterations),
+        "captured_packets": assembly.runner.status.captured_packets,
+        "capture_failures": assembly.runner.status.capture_failures,
+        "pending_runtime_events": assembly.runner.status.pending_runtime_events,
+        "service_state": assembly.runner.status.state.value,
+        "retry_journal": str(config.capture.retry_journal),
+    }
+    print(json.dumps(summary, sort_keys=True), file=sys.stderr)
+    return 0
+
+
+def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
+    return {
+        "config_path": str(config.config_path),
+        "node_id": config.studio.node_id,
+        "host_adapter": config.studio.host_adapter,
+        "hardware_adapter": config.studio.hardware_adapter,
+        "input_channels": config.studio.input_channels,
+        "output_channels": config.studio.output_channels,
+        "capture_source": config.capture.source,
+        "sample_rate_hz": config.capture.sample_rate_hz,
+        "sample_format": config.capture.sample_format.value,
+        "period_frames": config.capture.period_frames,
+        "heartbeat_interval_ms": config.capture.heartbeat_interval_ms,
+        "retry_journal": str(config.capture.retry_journal),
+        "runtime_transport": config.network.transport,
+        "runtime_endpoint": config.network.runtime_endpoint,
+    }
+
+
+def _nonnegative_integer(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return parsed
 
 
 if __name__ == "__main__":
