@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from hashlib import sha256
-import json
 import sys
 from typing import TextIO
 
 from velvet_audio_studio.capture.supervisor import RuntimeAudioEvent
-from velvet_audio_studio.runtime.event_protocol import EventProtocolEnvelope
+from velvet_audio_studio.runtime.event_protocol import (
+    EventProtocolEnvelope,
+    encode_event_protocol_envelope,
+    event_protocol_idempotency_key,
+)
 
 
 class JsonlEventProtocolTransport:
@@ -19,15 +20,10 @@ class JsonlEventProtocolTransport:
         self.stream = sys.stdout if stream is None else stream
 
     def publish_envelope(self, envelope: EventProtocolEnvelope) -> str:
-        encoded = json.dumps(
-            asdict(envelope),
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        )
-        self.stream.write(encoded + "\n")
+        encoded = encode_event_protocol_envelope(envelope)
+        self.stream.write(encoded.decode("utf-8") + "\n")
         self.stream.flush()
-        digest = sha256(encoded.encode("utf-8")).hexdigest()
+        digest = event_protocol_idempotency_key(envelope)
         return f"event-protocol-jsonl-{digest[:24]}"
 
 
