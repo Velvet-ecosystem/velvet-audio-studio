@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from hashlib import sha256
+import json
 from typing import Protocol
 
 from velvet_audio_studio.capture.supervisor import RuntimeAudioEvent
@@ -19,6 +21,22 @@ class EventProtocolTransport(Protocol):
     def publish_envelope(self, envelope: EventProtocolEnvelope) -> str:
         """Publish one Event Protocol envelope and return its receipt identifier."""
         ...
+
+
+def encode_event_protocol_envelope(envelope: EventProtocolEnvelope) -> bytes:
+    """Encode one envelope into stable UTF-8 JSON for hashing and transport."""
+    return json.dumps(
+        asdict(envelope),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
+
+
+def event_protocol_idempotency_key(envelope: EventProtocolEnvelope) -> str:
+    """Return a deterministic key shared by every Event Protocol transport."""
+    return sha256(encode_event_protocol_envelope(envelope)).hexdigest()
 
 
 class EventProtocolPublisher:
