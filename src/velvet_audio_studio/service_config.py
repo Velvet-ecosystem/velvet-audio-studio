@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -45,7 +46,11 @@ class CaptureServiceConfig:
 @dataclass(frozen=True)
 class NetworkServiceConfig:
     transport: str
+    event_protocol_transport: str
     runtime_endpoint: str | None
+    request_timeout_seconds: float
+    bearer_token_file: Path | None
+    max_response_bytes: int
 
 
 @dataclass(frozen=True)
@@ -58,7 +63,7 @@ class AudioServiceConfig:
     def with_capture_source(self, source: str) -> AudioServiceConfig:
         normalized = _capture_source(source)
         capture = replace(self.capture, source=normalized)
-        _validate_cross_section(self.studio, capture)
+        _validate_capture(self.studio, capture)
         return replace(self, capture=capture)
 
 
@@ -121,14 +126,11 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
             f"capture.sample_format must be one of: {supported}"
         ) from exc
 
-    journal_value = _nonempty_text(
+    journal_path = _resolved_path(
         capture_raw.get("retry_journal", "runtime-retry.jsonl"),
         "capture.retry_journal",
+        config_path=config_path,
     )
-    journal_path = Path(os.path.expandvars(journal_value)).expanduser()
-    if not journal_path.is_absolute():
-        journal_path = config_path.parent / journal_path
-    journal_path = journal_path.resolve()
 
     capture = CaptureServiceConfig(
         source=source,
@@ -172,12 +174,32 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
         endpoint_raw,
         "network.runtime_endpoint",
     )
+    event_transport_default = "http_json" if endpoint is not None else "stdout"
+    token_raw = network_raw.get("bearer_token_file")
+    token_path = None if token_raw is None else _resolved_path(
+        token_raw,
+        "network.bearer_token_file",
+        config_path=config_path,
+    )
     network = NetworkServiceConfig(
         transport=_nonempty_text(network_raw.get("transport", "ethernet"), "network.transport"),
+        event_protocol_transport=_event_protocol_transport(
+            network_raw.get("event_protocol_transport", event_transport_default)
+        ),
         runtime_endpoint=endpoint,
+        request_timeout_seconds=_positive_float(
+            network_raw.get("request_timeout_seconds", 2.0),
+            "network.request_timeout_seconds",
+        ),
+        bearer_token_file=token_path,
+        max_response_bytes=_positive_int(
+            network_raw.get("max_response_bytes", 65_536),
+            "network.max_response_bytes",
+        ),
     )
 
-    _validate_cross_section(studio, capture)
+    _validate_capture(studio, capture)
+    _validate_network(network)
     return AudioServiceConfig(
         studio=studio,
         capture=capture,
@@ -186,7 +208,7 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
     )
 
 
-def _validate_cross_section(
+def _validate_capture(
     studio: StudioIdentityConfig,
     capture: CaptureServiceConfig,
 ) -> None:
@@ -209,6 +231,29 @@ def _validate_cross_section(
             )
 
 
+def _validate_network(network: NetworkServiceConfig) -> None:
+    endpoint = network.runtime_endpoint
+    if network.event_protocol_transport == "http_json" and endpoint is None:
+        raise AudioServiceConfigError(
+            "network.runtime_endpoint is required for event_protocol_transport http_json"
+        )
+    if endpoint is None:
+        return
+    parsed = urlsplit(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise AudioServiceConfigError(
+            "network.runtime_endpoint must be an absolute http or https URL"
+        )
+    if parsed.username is not None or parsed.password is not None:
+        raise AudioServiceConfigError(
+            "network.runtime_endpoint must not contain embedded credentials"
+        )
+    if parsed.fragment:
+        raise AudioServiceConfigError(
+            "network.runtime_endpoint must not contain a URL fragment"
+        )
+
+
 def _mapping(value: Any, name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise AudioServiceConfigError(f"{name} must be a mapping")
@@ -222,6 +267,23 @@ def _capture_source(value: Any) -> str:
             "capture.source must be either simulated or alsa_octo"
         )
     return source
+
+
+def _event_protocol_transport(value: Any) -> str:
+    transport = _nonempty_text(value, "network.event_protocol_transport").casefold()
+    if transport not in {"stdout", "http_json", "unavailable"}:
+        raise AudioServiceConfigError(
+            "network.event_protocol_transport must be stdout, http_json, or unavailable"
+        )
+    return transport
+
+
+def _resolved_path(value: Any, name: str, *, config_path: Path) -> Path:
+    text = _nonempty_text(value, name)
+    path = Path(os.path.expandvars(text)).expanduser()
+    if not path.is_absolute():
+        path = config_path.parent / path
+    return path.resolve()
 
 
 def _nonempty_text(value: Any, name: str) -> str:
@@ -240,6 +302,12 @@ def _nonnegative_int(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise AudioServiceConfigError(f"{name} must be a non-negative integer")
     return value
+
+
+def _positive_float(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise AudioServiceConfigError(f"{name} must be a positive number")
+    return float(value)
 
 
 def _nonnegative_float(value: Any, name: str) -> float:
