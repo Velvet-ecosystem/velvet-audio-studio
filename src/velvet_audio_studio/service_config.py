@@ -100,6 +100,8 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
 
     source = _capture_source(capture_raw.get("source", "alsa_octo"))
     identity_terms_raw = capture_raw.get("identity_terms", ("audioinjector", "octo"))
+    if identity_terms_raw is None and source == "simulated":
+        identity_terms_raw = ()
     if not isinstance(identity_terms_raw, (list, tuple)):
         raise AudioServiceConfigError("capture.identity_terms must be a list of strings")
     identity_terms = tuple(
