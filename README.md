@@ -27,7 +27,23 @@ See `docs/known_issues.md` and `docs/hardware_acceptance.md` before connecting t
 
 ## Service configuration
 
-`config/studio.example.yaml` defines the node identity, capture source, stable Octo identity terms, PCM format, sample rate, period size, heartbeat cadence, retry journal, and Runtime backlog policy.
+`config/studio.example.yaml` is a development configuration. `config/studio.systemd.example.yaml` shows the vehicle service using HTTP Event Protocol delivery over Ethernet.
+
+The network section keeps physical transport separate from Event Protocol delivery:
+
+```yaml
+network:
+  transport: ethernet
+  event_protocol_transport: http_json
+  runtime_endpoint: http://velvet-runtime.local:8765/v1/events
+  request_timeout_seconds: 2.0
+  bearer_token_file: /etc/velvet-audio/runtime.token
+  max_response_bytes: 65536
+```
+
+HTTP requests use canonical Event Protocol JSON with deterministic `Idempotency-Key` and `X-Velvet-Event-ID` headers. Runtime must return a receipt identifier in JSON or a receipt header. A timeout, transport error, oversized response, or success without a receipt leaves the event in the durable ordered journal. A `409 Conflict` is treated as an acknowledged duplicate only when Runtime supplies the existing receipt.
+
+Bearer tokens are read from the configured file for every publish, allowing token rotation without putting credentials in YAML or restarting the service.
 
 Validate configuration without touching ALSA hardware:
 
@@ -51,13 +67,27 @@ velvet-audio run \
   --max-iterations 1
 ```
 
-Run the configured ALSA Octo source until interrupted:
+Run the configured ALSA and Runtime transports until SIGINT or SIGTERM:
 
 ```bash
-velvet-audio run --config config/studio.example.yaml --runtime-mode stdout
+velvet-audio run \
+  --config /etc/velvet-audio/studio.yaml \
+  --runtime-mode configured
 ```
 
-`stdout` is the local development transport. `unavailable` intentionally fails every Runtime delivery so ordered events remain in the durable retry journal for outage and restart testing. The real Ethernet Event Protocol transport will replace this launch-time development choice without changing capture, queue, or service logic.
+Runtime modes:
+
+- `configured` follows `network.event_protocol_transport`.
+- `stdout` emits canonical Event Protocol JSONL for development.
+- `unavailable` intentionally rejects delivery so ordered events remain in the journal.
+
+SIGINT and SIGTERM request an orderly shutdown. Capture closes first, stop events are generated in order, final delivery is attempted, and anything unacknowledged remains durable.
+
+## systemd
+
+The hardened unit is in `packaging/systemd/velvet-audio.service`. It validates configuration before launch, uses a dedicated `velvet-audio` account with supplementary ALSA access through the `audio` group, stores durable state in `/var/lib/velvet-audio`, and restarts on operational failure without looping on invalid configuration.
+
+Installation steps are in `packaging/systemd/README.md`.
 
 ## Status
 
