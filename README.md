@@ -101,7 +101,11 @@ Every accepted event also receives pending dispatch state in the same SQLite tra
 
 `CourtRoutedIngressHandler` places a durable Court decision before routing. Approved events carry a bounded capability into the router. Durable denials finish with the Court denial receipt and never reach routing. Stable `runtime-dispatch-*` identities let Court and organs deduplicate retries across timeout, restart, and the final-commit crash gap.
 
-Receiver deployment and trust boundaries are documented in `docs/runtime_receiver_deployment.md`. The HTTP sender contract is in `docs/runtime_http_contract.md`. Claim ordering, leases, migration, and Court routing are in `docs/runtime_ingress_dispatch.md`.
+`RuntimeDispatchWorker` turns that claim path into a continuous service loop with bounded retry backoff, lease renewal during slow Court or route calls, health events, graceful stop behavior, and evidence-backed quarantine. Generic repetition never authorizes a skip. Only explicitly classified permanent failures can become quarantine candidates, and they must repeat with the same fingerprint before a durable `runtime-quarantine-*` receipt advances the lane.
+
+`build_runtime_dispatch_worker` assembles the queue and `CourtRoutedIngressHandler` around Runtime’s real Court and router implementations. It deliberately supplies no allow-all Court or placeholder route receipt.
+
+Receiver deployment and trust boundaries are documented in `docs/runtime_receiver_deployment.md`. The HTTP sender contract is in `docs/runtime_http_contract.md`. Claim ordering, leases, migration, and Court routing are in `docs/runtime_ingress_dispatch.md`. Long-running worker operation and quarantine rules are in `docs/runtime_dispatch_worker.md`.
 
 ## systemd
 
