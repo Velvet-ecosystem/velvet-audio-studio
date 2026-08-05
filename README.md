@@ -97,7 +97,11 @@ velvet-audio serve-runtime \
 
 The receiver validates the envelope and idempotency headers, durably stores canonical event bytes in SQLite, returns `202` for a new event, and returns `409` with the original receipt for an exact replay. A receipt proves durable ingress acceptance, not completed downstream Court or organ processing.
 
-Receiver deployment and trust boundaries are documented in `docs/runtime_receiver_deployment.md`. The HTTP sender and acknowledgement contract is in `docs/runtime_http_contract.md`.
+Every accepted event also receives pending dispatch state in the same SQLite transaction. `SqliteIngressDispatchQueue` leases the oldest unprocessed event, blocks later events behind a live claim, recovers expired leases, and records the final downstream receipt only after processing succeeds.
+
+`CourtRoutedIngressHandler` places a durable Court decision before routing. Approved events carry a bounded capability into the router. Durable denials finish with the Court denial receipt and never reach routing. Stable `runtime-dispatch-*` identities let Court and organs deduplicate retries across timeout, restart, and the final-commit crash gap.
+
+Receiver deployment and trust boundaries are documented in `docs/runtime_receiver_deployment.md`. The HTTP sender contract is in `docs/runtime_http_contract.md`. Claim ordering, leases, migration, and Court routing are in `docs/runtime_ingress_dispatch.md`.
 
 ## systemd
 
