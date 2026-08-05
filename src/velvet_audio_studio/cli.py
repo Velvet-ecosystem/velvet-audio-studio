@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import sys
 
@@ -9,12 +10,9 @@ from velvet_audio_studio.adapters.audio_injector_octo.capture_factory import (
     OctoCaptureUnavailable,
 )
 from velvet_audio_studio.diagnostics.probe import probe_json
-from velvet_audio_studio.runtime.event_protocol import EventProtocolPublisher
-from velvet_audio_studio.runtime.local_transport import (
-    JsonlEventProtocolTransport,
-    UnavailableRuntimePublisher,
-)
+from velvet_audio_studio.runtime.publisher_factory import build_runtime_publisher
 from velvet_audio_studio.runtime.retry_journal import RetryJournalError
+from velvet_audio_studio.runtime.shutdown_signals import ShutdownSignalLatch
 from velvet_audio_studio.service_assembly import build_audio_service
 from velvet_audio_studio.service_config import (
     AudioServiceConfig,
@@ -80,18 +78,18 @@ def _parser() -> argparse.ArgumentParser:
     _add_config_arguments(run_parser)
     run_parser.add_argument(
         "--runtime-mode",
-        choices=("stdout", "unavailable"),
-        default="stdout",
+        choices=("configured", "stdout", "unavailable"),
+        default="configured",
         help=(
-            "stdout emits Event Protocol JSONL; unavailable deliberately retains "
-            "all events in the retry journal"
+            "configured follows network.event_protocol_transport; stdout emits JSONL; "
+            "unavailable deliberately retains events in the retry journal"
         ),
     )
     run_parser.add_argument(
         "--max-iterations",
         type=_nonnegative_integer,
         default=None,
-        help="Stop after this many capture polls; omitted means run until interrupted",
+        help="Stop after this many capture polls; omitted means run until signalled",
     )
     run_parser.add_argument(
         "--plan",
@@ -120,17 +118,24 @@ def _run_service(args: argparse.Namespace) -> int:
     if args.source is not None:
         config = config.with_capture_source(args.source)
 
-    if args.runtime_mode == "stdout":
-        publisher = EventProtocolPublisher(JsonlEventProtocolTransport(sys.stdout))
-    else:
-        publisher = UnavailableRuntimePublisher()
+    network = config.network
+    if args.runtime_mode != "configured":
+        network = replace(network, event_protocol_transport=args.runtime_mode)
+    publisher = build_runtime_publisher(network, stream=sys.stdout)
 
     assembly = build_audio_service(config, publisher)
     if args.plan:
-        print(json.dumps(assembly.describe(), indent=2, sort_keys=True, default=str))
+        plan = assembly.describe()
+        plan["effective_event_protocol_transport"] = network.event_protocol_transport
+        print(json.dumps(plan, indent=2, sort_keys=True, default=str))
         return 0
 
-    result = assembly.runner.run(max_iterations=args.max_iterations)
+    latch = ShutdownSignalLatch()
+    with latch.installed():
+        result = assembly.runner.run(
+            stop_requested=latch.is_requested,
+            max_iterations=args.max_iterations,
+        )
     summary = {
         "node_id": config.studio.node_id,
         "iterations": len(result.iterations),
@@ -138,6 +143,7 @@ def _run_service(args: argparse.Namespace) -> int:
         "capture_failures": assembly.runner.status.capture_failures,
         "pending_runtime_events": assembly.runner.status.pending_runtime_events,
         "service_state": assembly.runner.status.state.value,
+        "shutdown_signal": latch.signal_number,
         "retry_journal": str(config.capture.retry_journal),
     }
     print(json.dumps(summary, sort_keys=True), file=sys.stderr)
@@ -158,8 +164,16 @@ def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
         "period_frames": config.capture.period_frames,
         "heartbeat_interval_ms": config.capture.heartbeat_interval_ms,
         "retry_journal": str(config.capture.retry_journal),
-        "runtime_transport": config.network.transport,
+        "network_transport": config.network.transport,
+        "event_protocol_transport": config.network.event_protocol_transport,
         "runtime_endpoint": config.network.runtime_endpoint,
+        "request_timeout_seconds": config.network.request_timeout_seconds,
+        "bearer_token_file": (
+            str(config.network.bearer_token_file)
+            if config.network.bearer_token_file is not None
+            else None
+        ),
+        "max_response_bytes": config.network.max_response_bytes,
     }
 
 
