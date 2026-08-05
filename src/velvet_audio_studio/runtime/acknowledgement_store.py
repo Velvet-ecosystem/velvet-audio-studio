@@ -55,6 +55,36 @@ CREATE TABLE IF NOT EXISTS event_acknowledgements (
 
 CREATE INDEX IF NOT EXISTS idx_event_acknowledgements_source_sequence
 ON event_acknowledgements(source_id, sequence);
+
+CREATE TABLE IF NOT EXISTS event_dispatch_state (
+    idempotency_key TEXT PRIMARY KEY
+        REFERENCES event_acknowledgements(idempotency_key) ON DELETE CASCADE,
+    dispatch_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'claimed', 'processed')),
+    claimed_by TEXT,
+    claim_token TEXT UNIQUE,
+    claimed_at_unix_ns INTEGER,
+    lease_expires_at_unix_ns INTEGER,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    processed_at_unix_ns INTEGER,
+    downstream_receipt_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_dispatch_state_claimable
+ON event_dispatch_state(status, lease_expires_at_unix_ns);
+
+INSERT OR IGNORE INTO event_dispatch_state (
+    idempotency_key,
+    dispatch_id,
+    status
+)
+SELECT
+    idempotency_key,
+    replace(receipt_id, 'runtime-receipt-', 'runtime-dispatch-'),
+    'pending'
+FROM event_acknowledgements;
 """
 
 
@@ -95,6 +125,7 @@ class SqliteAcknowledgementStore:
         canonical = encode_event_protocol_envelope(envelope)
         envelope_digest = sha256(canonical).hexdigest()
         receipt_id = _receipt_id(key)
+        dispatch_id = _dispatch_id(key)
         observed_ns = self.clock_ns()
         if observed_ns < 0:
             raise ValueError("acknowledgement clock cannot return a negative value")
@@ -125,6 +156,14 @@ class SqliteAcknowledgementStore:
                     WHERE idempotency_key = ?
                     """,
                     (observed_ns, key),
+                )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO event_dispatch_state (
+                        idempotency_key, dispatch_id, status
+                    ) VALUES (?, ?, 'pending')
+                    """,
+                    (key, dispatch_id),
                 )
                 connection.commit()
                 return DurableAcknowledgement(
@@ -169,6 +208,16 @@ class SqliteAcknowledgementStore:
                     observed_ns,
                     observed_ns,
                 ),
+            )
+            connection.execute(
+                """
+                INSERT INTO event_dispatch_state (
+                    idempotency_key,
+                    dispatch_id,
+                    status
+                ) VALUES (?, ?, 'pending')
+                """,
+                (key, dispatch_id),
             )
             connection.commit()
             return DurableAcknowledgement(
@@ -251,6 +300,7 @@ class SqliteAcknowledgementStore:
             timeout=self.timeout_seconds,
             isolation_level=None,
         )
+        connection.execute("PRAGMA foreign_keys=ON")
         connection.execute(f"PRAGMA busy_timeout={int(self.timeout_seconds * 1_000)}")
         return connection
 
@@ -258,3 +308,8 @@ class SqliteAcknowledgementStore:
 def _receipt_id(idempotency_key: str) -> str:
     digest = sha256(f"velvet-runtime:{idempotency_key}".encode("utf-8")).hexdigest()
     return f"runtime-receipt-{digest[:32]}"
+
+
+def _dispatch_id(idempotency_key: str) -> str:
+    digest = sha256(f"velvet-dispatch:{idempotency_key}".encode("utf-8")).hexdigest()
+    return f"runtime-dispatch-{digest[:32]}"
