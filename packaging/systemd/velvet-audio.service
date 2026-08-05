@@ -12,6 +12,7 @@ Group=velvet-audio
 SupplementaryGroups=audio
 WorkingDirectory=/opt/velvet-audio-studio
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
 
 ExecStartPre=/opt/velvet-audio-studio/.venv/bin/velvet-audio validate-config --config /etc/velvet-audio/studio.yaml
 ExecStart=/opt/velvet-audio-studio/.venv/bin/velvet-audio run --config /etc/velvet-audio/studio.yaml --runtime-mode configured
