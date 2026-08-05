@@ -49,7 +49,7 @@ A ready receiver returns:
 {"accepted_events":12,"endpoint_path":"/v1/events","status":"ready"}
 ```
 
-The current health response reports durable ingress acceptance. Dispatch state is available through `SqliteIngressDispatchQueue.stats()` and will be folded into the final Runtime health surface when the real Court worker is assembled.
+The current health response reports durable ingress acceptance. Dispatch state is available through `SqliteIngressDispatchQueue.stats()` and the long-running worker emits its own queue, lease, retry, quarantine, and infrastructure health events.
 
 ## Durable acknowledgement database
 
@@ -71,7 +71,14 @@ The same database stores dispatch state:
 - lease timestamps
 - attempt count and last error
 - processed time
-- final Court denial, route, or organ receipt
+- final Court denial, route, organ, or quarantine receipt
+
+The quarantine-capable worker also adds:
+
+- repeated failure fingerprint and evidence count
+- poison-classification reason
+- stable `runtime-quarantine-*` receipt
+- quarantine timestamp
 
 The same idempotency key presented with different canonical envelope bytes is rejected as a conflict. Duplicate delivery of the same event increments the replay count and returns the original receipt.
 
@@ -85,7 +92,28 @@ Expired claims may be reclaimed. The stable dispatch ID does not change, allowin
 
 `CourtRoutedIngressHandler` places a durable Court decision before routing. Approved events carry a bounded capability to the router. Durable denials complete with their Court denial receipt and never reach routing.
 
-The full claim, lease, receipt, migration, and crash-gap doctrine is in `docs/runtime_ingress_dispatch.md`.
+`RuntimeDispatchWorker` adds continuous polling, bounded retry backoff, lease renewal during slow Court or route operations, graceful stop behavior, and conservative quarantine. Generic repeated failures remain retryable. Only explicitly classified permanent failures may be quarantined, and only after the same fingerprint reaches the configured threshold.
+
+The full claim, lease, receipt, migration, and crash-gap doctrine is in `docs/runtime_ingress_dispatch.md`. Long-running worker behavior is in `docs/runtime_dispatch_worker.md`.
+
+## Worker assembly boundary
+
+Runtime can assemble the worker around its real Court and router:
+
+```python
+assembly = build_runtime_dispatch_worker(
+    "/var/lib/velvet-runtime-receiver/acknowledgements.sqlite3",
+    court,
+    router,
+    worker_id="runtime-dispatch-01",
+)
+
+assembly.worker.run(stop_requested=shutdown_latch.is_requested)
+```
+
+The repository deliberately does not provide an allow-all Court, dummy capability, or fake route receipt.
+
+For that reason, the reference receiver has a systemd unit today, but the dispatch worker does not yet ship with a production unit. A worker unit belongs in the final Runtime integration once the actual Court ledger, capability vocabulary, router, health sink, and shutdown limits are bound.
 
 ## systemd installation
 
