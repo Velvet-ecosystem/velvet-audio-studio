@@ -8,7 +8,11 @@ from velvet_audio_studio.capture.microphone_capture import (
     VoiceCapturePacket,
     analyze_capture,
 )
-from velvet_audio_studio.capture.session import CaptureSession, CaptureTransition
+from velvet_audio_studio.capture.session import (
+    CaptureSession,
+    CaptureSessionState,
+    CaptureTransition,
+)
 from velvet_audio_studio.capture.voice_handoff import VoiceInputHandoff, prepare_voice_handoff
 
 
@@ -57,7 +61,7 @@ class CaptureSupervisor:
             observed_at_monotonic_ns=observed_at_monotonic_ns,
         )
         transitions = self.session.observe(packet)
-        handoff = prepare_voice_handoff(packet)
+        handoff = self._gate_handoff_for_lifecycle(prepare_voice_handoff(packet))
         occurred_ns = (
             monotonic_ns()
             if observed_at_monotonic_ns is None
@@ -103,6 +107,30 @@ class CaptureSupervisor:
     def stop(self, *, occurred_at_monotonic_ns: int | None = None) -> RuntimeAudioEvent:
         transition = self.session.stop()
         return self._transition_event(transition, occurred_at_monotonic_ns)
+
+    def _gate_handoff_for_lifecycle(
+        self,
+        handoff: VoiceInputHandoff,
+    ) -> VoiceInputHandoff:
+        if (
+            self.session.state is CaptureSessionState.ACTIVE
+            or handoff.event != "audio.voice_input.ready"
+        ):
+            return handoff
+
+        return VoiceInputHandoff(
+            event="audio.voice_input.degraded",
+            source_packet_event=handoff.source_packet_event,
+            selected_channel_index=None,
+            selected_logical_name=None,
+            mono_samples=(),
+            raw_multichannel_samples=handoff.raw_multichannel_samples,
+            confidence=0.0,
+            degraded_reasons=tuple(dict.fromkeys((
+                *handoff.degraded_reasons,
+                "capture session awaiting recovery",
+            ))),
+        )
 
     @staticmethod
     def _transition_event(
