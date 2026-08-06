@@ -34,13 +34,13 @@ Models are provisioned out of band and stored locally. The initial Raspberry Pi 
 vosk-model-small-en-us-0.15
 ```
 
-A suggested installation directory is:
+A suggested root-owned installation directory is:
 
 ```text
-/var/lib/velvet-audio/models/vosk-model-small-en-us-0.15
+/usr/share/velvet-audio/models/vosk-model-small-en-us-0.15
 ```
 
-The service never downloads or replaces a model. Model acquisition, checksum verification, license review, extraction, ownership, and promotion are deployment responsibilities.
+The directory should be readable by the `velvet-audio` service but not writable by it. The service never downloads or replaces a model. Model acquisition, checksum verification, license review, extraction, ownership, and promotion are deployment responsibilities.
 
 ## Configuration
 
@@ -48,7 +48,7 @@ The service never downloads or replaces a model. Model acquisition, checksum ver
 transcription:
   enabled: true
   engine: vosk
-  model_path: /var/lib/velvet-audio/models/vosk-model-small-en-us-0.15
+  model_path: /usr/share/velvet-audio/models/vosk-model-small-en-us-0.15
   recognizer_sample_rate_hz: 16000
   language: en-us
   include_words: true
