@@ -19,6 +19,9 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.5",
 ]
+speech = [
+  "vosk>=0.3.50,<0.4",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
