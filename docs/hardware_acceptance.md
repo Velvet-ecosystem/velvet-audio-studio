@@ -31,11 +31,28 @@ A Raspberry Pi and Audio Injector Octo node is not trusted merely because ALSA l
 7. Reboot and repeat discovery to prove stable startup.
 8. Save a receipt before marking the unit available.
 
+## Offline speech evidence
+
+When Vosk transcription is enabled, hardware acceptance also records:
+
+- Python, pip, Vosk package, and native-library versions
+- local model identifier, checksum, size, and license
+- cold model-load time
+- resident memory and CPU load while idle and decoding
+- real-time factor for representative utterance lengths
+- CPU temperature and throttling observations
+- queue depth during back-to-back utterances
+- recognition results in quiet, road noise, music, HVAC noise, and overlapping speech
+- false and missed wake-name results for `hey velvet`, `velvet`, and `princess`
+- worker restart and clean-shutdown results
+
+An x86 CI import proves packaging only. It does not accept the Raspberry Pi deployment.
+
 ## Acceptance states
 
 - `ACCEPTED`: all required tests pass.
 - `DEGRADED`: usable with explicit missing channels or restrictions.
 - `REJECTED`: enumeration succeeds but signal integrity or stability fails.
-- `UNAVAILABLE`: board or codec cannot be discovered.
+- `UNAVAILABLE`: board, codec, model, or native speech engine cannot be discovered.
 
 A rejected unit may be replaced without changing the studio core. The replacement adapter must publish the same logical capability contract or clearly report differences for routing policy.

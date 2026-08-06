@@ -27,6 +27,14 @@ from velvet_audio_studio.service_config import (
     AudioServiceConfigError,
     load_audio_service_config,
 )
+from velvet_audio_studio.voice.config import (
+    VoiceFrontEndConfigError,
+    load_voice_frontend_settings,
+)
+from velvet_audio_studio.voice.transcription_config import (
+    TranscriptionServiceConfigError,
+    load_transcription_settings,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
         AudioServiceConfigError,
         OctoCaptureUnavailable,
         RetryJournalError,
+        TranscriptionServiceConfigError,
+        VoiceFrontEndConfigError,
     ) as exc:
         print(f"velvet-audio: {exc}", file=sys.stderr)
         return 2
@@ -188,6 +198,12 @@ def _run_service(args: argparse.Namespace) -> int:
         "capture_failures": assembly.runner.status.capture_failures,
         "pending_runtime_events": assembly.runner.status.pending_runtime_events,
         "service_state": assembly.runner.status.state.value,
+        "transcription_enabled": assembly.transcription_settings.enabled,
+        "transcription_worker_state": (
+            assembly.transcription_worker.state.value
+            if assembly.transcription_worker is not None
+            else None
+        ),
         "shutdown_signal": latch.signal_number,
         "retry_journal": str(config.capture.retry_journal),
     }
@@ -245,6 +261,13 @@ def _serve_runtime(args: argparse.Namespace) -> int:
 
 
 def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
+    voice = load_voice_frontend_settings(config.config_path)
+    transcription = load_transcription_settings(config.config_path)
+    if transcription.enabled and not voice.enabled:
+        raise TranscriptionServiceConfigError(
+            "transcription requires voice_frontend.enabled to be true"
+        )
+    vosk = transcription.vosk
     return {
         "config_path": str(config.config_path),
         "node_id": config.studio.node_id,
@@ -258,6 +281,16 @@ def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
         "period_frames": config.capture.period_frames,
         "heartbeat_interval_ms": config.capture.heartbeat_interval_ms,
         "retry_journal": str(config.capture.retry_journal),
+        "voice_frontend_enabled": voice.enabled,
+        "transcription_enabled": transcription.enabled,
+        "transcription_engine": transcription.engine,
+        "transcription_model_path": str(vosk.model_path) if vosk is not None else None,
+        "transcription_model_id": vosk.model_path.name if vosk is not None else None,
+        "transcription_sample_rate_hz": (
+            vosk.recognizer_sample_rate_hz if vosk is not None else None
+        ),
+        "transcription_queue_capacity": transcription.queue_capacity,
+        "transcription_wake_names": transcription.wake.names,
         "network_transport": config.network.transport,
         "event_protocol_transport": config.network.event_protocol_transport,
         "runtime_endpoint": config.network.runtime_endpoint,

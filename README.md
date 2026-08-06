@@ -2,7 +2,7 @@
 
 Velvet’s shared multichannel audio organ for Raspberry Pi and Audio Injector Octo hardware.
 
-This repository owns studio booking, channel leases, routing, mixing policy, priority ducking, microphone capture, voice playback, alerts, music sessions, device health, and the hardware adapters that connect Velvet to the Pi and Octo.
+This repository owns studio booking, channel leases, routing, mixing policy, priority ducking, microphone capture, voice playback, alerts, music sessions, device health, local voice activity, bounded utterances, offline transcription, and the hardware adapters that connect Velvet to the Pi and Octo.
 
 ## Initial hardware target
 
@@ -45,7 +45,7 @@ HTTP requests use canonical Event Protocol JSON with deterministic `Idempotency-
 
 Bearer tokens are read from the configured file for every publish, allowing token rotation without putting credentials in YAML or restarting the service.
 
-Validate configuration without touching ALSA hardware:
+Validate configuration without touching ALSA hardware or loading a Vosk model:
 
 ```bash
 velvet-audio validate-config --config config/studio.example.yaml
@@ -81,7 +81,38 @@ Runtime modes:
 - `stdout` emits canonical Event Protocol JSONL for development.
 - `unavailable` intentionally rejects delivery so ordered events remain in the journal.
 
-SIGINT and SIGTERM request an orderly shutdown. Capture closes first, stop events are generated in order, final delivery is attempted, and anything unacknowledged remains durable.
+SIGINT and SIGTERM request an orderly shutdown. Capture closes, local voice activity is cancelled, the transcription worker drains within its configured bound, stop events are generated in order, final delivery is attempted, and anything unacknowledged remains durable.
+
+## Local voice and offline Vosk
+
+The voice front end uses deterministic energy hysteresis to create bounded local utterances. Completed utterances are sent to a bounded worker so speech decoding cannot block continuous ALSA capture.
+
+Install the optional speech engine separately:
+
+```bash
+python -m pip install -e '.[speech]'
+```
+
+Provision a root-owned Vosk model locally, then enable the transcription section:
+
+```yaml
+transcription:
+  enabled: true
+  engine: vosk
+  model_path: /usr/share/velvet-audio/models/vosk-model-small-en-us-0.15
+  recognizer_sample_rate_hz: 16000
+  include_words: true
+  queue_capacity: 4
+  worker_stop_timeout_seconds: 10.0
+  wake_names:
+    - hey velvet
+    - velvet
+    - princess
+```
+
+The service never downloads models and should not have write access to the model directory. Unmatched transcript text stays on the audio node. A matched wake name releases only the request text after the name, and the resulting event carries `command_authority: false`. Raw utterance samples never enter Runtime events.
+
+See `docs/offline_transcription.md` for model provisioning, event boundaries, worker behavior, privacy rules, and Raspberry Pi acceptance evidence.
 
 ## Reference Runtime receiver
 
@@ -117,4 +148,4 @@ Audio-node installation steps are in `packaging/systemd/README.md`.
 
 ## Status
 
-Foundation scaffold in progress on `foundation/initial-studio-tree`.
+The Audio Studio foundation, lifecycle-gated voice front end, bounded utterance capture, offline Vosk adapter, wake-name privacy gate, durable Event Protocol transport, Runtime ingress receiver, and ordered dispatch foundations are implemented. Physical Octo and Raspberry Pi acceptance remains hardware work.
