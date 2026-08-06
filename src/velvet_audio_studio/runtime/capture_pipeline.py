@@ -19,12 +19,17 @@ from velvet_audio_studio.runtime.publisher import (
     DeliveryBatch,
     RuntimeEventPublisher,
 )
+from velvet_audio_studio.voice.front_end import (
+    LocalVoiceFrontEnd,
+    LocalVoiceFrontEndResult,
+)
 
 
 @dataclass(frozen=True)
 class PublishedCaptureResult:
     capture: CaptureSupervisorResult
     delivery: DeliveryBatch
+    voice_frontend: LocalVoiceFrontEndResult | None = None
 
 
 class PublishedCapturePipeline:
@@ -38,9 +43,11 @@ class PublishedCapturePipeline:
         self,
         supervisor: CaptureSupervisor,
         runtime_bridge: AudioRuntimeBridge,
+        voice_frontend: LocalVoiceFrontEnd | None = None,
     ) -> None:
         self.supervisor = supervisor
         self.runtime_bridge = runtime_bridge
+        self.voice_frontend = voice_frontend
 
     def process_and_publish(
         self,
@@ -51,15 +58,46 @@ class PublishedCapturePipeline:
         captured_at_monotonic_ns: int | None = None,
         observed_at_monotonic_ns: int | None = None,
     ) -> PublishedCaptureResult:
+        observed_ns = (
+            monotonic_ns()
+            if observed_at_monotonic_ns is None
+            else observed_at_monotonic_ns
+        )
         capture = self.supervisor.process(
             interleaved_samples,
             sample_rate_hz=sample_rate_hz,
             muted_channels=muted_channels,
             captured_at_monotonic_ns=captured_at_monotonic_ns,
-            observed_at_monotonic_ns=observed_at_monotonic_ns,
+            observed_at_monotonic_ns=observed_ns,
         )
-        delivery = self.runtime_bridge.deliver(capture.events)
-        return PublishedCaptureResult(capture=capture, delivery=delivery)
+        voice = self._process_voice_frontend(
+            capture,
+            sample_rate_hz=sample_rate_hz,
+            observed_at_monotonic_ns=observed_ns,
+        )
+        events = capture.events + (() if voice is None else voice.events)
+        delivery = self.runtime_bridge.deliver(events)
+        return PublishedCaptureResult(
+            capture=capture,
+            delivery=delivery,
+            voice_frontend=voice,
+        )
+
+    def _process_voice_frontend(
+        self,
+        capture: CaptureSupervisorResult,
+        *,
+        sample_rate_hz: int,
+        observed_at_monotonic_ns: int,
+    ) -> LocalVoiceFrontEndResult | None:
+        if self.voice_frontend is None:
+            return None
+        return self.voice_frontend.process(
+            capture.handoff,
+            sample_rate_hz=sample_rate_hz,
+            occurred_at_monotonic_ns=observed_at_monotonic_ns,
+            packet_sequence=self.supervisor.session.packet_sequence,
+        )
 
 
 @dataclass(frozen=True)
@@ -77,6 +115,7 @@ class ReliableRuntimeCycle:
 class ReliablePublishedCaptureResult:
     capture: CaptureSupervisorResult
     runtime: ReliableRuntimeCycle
+    voice_frontend: LocalVoiceFrontEndResult | None = None
 
 
 class ReliablePublishedCapturePipeline:
@@ -93,6 +132,7 @@ class ReliablePublishedCapturePipeline:
         publisher: RuntimeEventPublisher,
         retry_queue: DurableOrderedRetryQueue,
         backlog_supervisor: DurableBacklogSupervisor | None = None,
+        voice_frontend: LocalVoiceFrontEnd | None = None,
     ) -> None:
         self.supervisor = supervisor
         self.publisher = publisher
@@ -100,6 +140,7 @@ class ReliablePublishedCapturePipeline:
         self.backlog_supervisor = backlog_supervisor or DurableBacklogSupervisor(
             retry_queue
         )
+        self.voice_frontend = voice_frontend
         if self.backlog_supervisor.queue is not retry_queue:
             raise ValueError("backlog supervisor must manage the pipeline retry queue")
 
@@ -137,11 +178,21 @@ class ReliablePublishedCapturePipeline:
             captured_at_monotonic_ns=captured_at_monotonic_ns,
             observed_at_monotonic_ns=observed_ns,
         )
-        runtime = self._publish_cycle(
-            capture.events,
+        voice = self._process_voice_frontend(
+            capture,
+            sample_rate_hz=sample_rate_hz,
             observed_at_monotonic_ns=observed_ns,
         )
-        return ReliablePublishedCaptureResult(capture=capture, runtime=runtime)
+        runtime_events = capture.events + (() if voice is None else voice.events)
+        runtime = self._publish_cycle(
+            runtime_events,
+            observed_at_monotonic_ns=observed_ns,
+        )
+        return ReliablePublishedCaptureResult(
+            capture=capture,
+            runtime=runtime,
+            voice_frontend=voice,
+        )
 
     def stop_and_publish(
         self,
@@ -153,8 +204,17 @@ class ReliablePublishedCapturePipeline:
             if occurred_at_monotonic_ns is None
             else occurred_at_monotonic_ns
         )
+        voice_events: tuple[RuntimeAudioEvent, ...] = ()
+        if self.voice_frontend is not None:
+            voice_events = self.voice_frontend.stop(
+                occurred_at_monotonic_ns=occurred_ns,
+                packet_sequence=self.supervisor.session.packet_sequence,
+            )
         event = self.supervisor.stop(occurred_at_monotonic_ns=occurred_ns)
-        return self._publish_cycle((event,), observed_at_monotonic_ns=occurred_ns)
+        return self._publish_cycle(
+            voice_events + (event,),
+            observed_at_monotonic_ns=occurred_ns,
+        )
 
     def replay_pending(
         self,
@@ -182,6 +242,22 @@ class ReliablePublishedCapturePipeline:
             else observed_at_monotonic_ns
         )
         return self._publish_cycle(events, observed_at_monotonic_ns=observed_ns)
+
+    def _process_voice_frontend(
+        self,
+        capture: CaptureSupervisorResult,
+        *,
+        sample_rate_hz: int,
+        observed_at_monotonic_ns: int,
+    ) -> LocalVoiceFrontEndResult | None:
+        if self.voice_frontend is None:
+            return None
+        return self.voice_frontend.process(
+            capture.handoff,
+            sample_rate_hz=sample_rate_hz,
+            occurred_at_monotonic_ns=observed_at_monotonic_ns,
+            packet_sequence=self.supervisor.session.packet_sequence,
+        )
 
     def _publish_cycle(
         self,
