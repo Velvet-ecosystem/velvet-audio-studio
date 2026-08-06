@@ -27,6 +27,7 @@ from velvet_audio_studio.simulated.capture_source import (
     SimulatedCaptureSource,
     simulated_six_channel_frame,
 )
+from velvet_audio_studio.voice.front_end import LocalVoiceFrontEnd
 
 
 CaptureResolver = Callable[..., OctoCaptureResolution]
@@ -40,6 +41,7 @@ class AudioServiceAssembly:
     journal: JsonlRetryJournal
     retry_queue: DurableOrderedRetryQueue
     capture_supervisor: CaptureSupervisor
+    voice_frontend: LocalVoiceFrontEnd
     backlog_supervisor: DurableBacklogSupervisor
     pipeline: ReliablePublishedCapturePipeline
     runner: ReliableAudioServiceRunner
@@ -55,6 +57,7 @@ class AudioServiceAssembly:
             "sample_format": self.config.capture.sample_format.value,
             "period_frames": self.config.capture.period_frames,
             "retry_journal": str(self.config.capture.retry_journal),
+            "voice_frontend_enabled": True,
             "network_transport": network.transport,
             "event_protocol_transport": network.event_protocol_transport,
             "runtime_endpoint": network.runtime_endpoint,
@@ -98,6 +101,7 @@ def build_audio_service(
         max_pending=config.capture.max_pending_runtime_events,
     )
     capture_supervisor = CaptureSupervisor()
+    voice_frontend = LocalVoiceFrontEnd()
     backlog_supervisor = DurableBacklogSupervisor(
         retry_queue,
         capacity_warning_ratio=config.capture.backlog_warning_ratio,
@@ -108,6 +112,7 @@ def build_audio_service(
         publisher,
         retry_queue,
         backlog_supervisor,
+        voice_frontend=voice_frontend,
     )
     runner = ReliableAudioServiceRunner(
         pipeline,
@@ -124,6 +129,7 @@ def build_audio_service(
         journal=journal,
         retry_queue=retry_queue,
         capture_supervisor=capture_supervisor,
+        voice_frontend=voice_frontend,
         backlog_supervisor=backlog_supervisor,
         pipeline=pipeline,
         runner=runner,
