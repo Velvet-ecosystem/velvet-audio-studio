@@ -1,0 +1,47 @@
+[Unit]
+Description=Velvet Runtime Event Protocol Receiver
+Documentation=https://github.com/Velvet-ecosystem/velvet-audio-studio/blob/main/docs/runtime_receiver_deployment.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=velvet-runtime-receiver
+Group=velvet-runtime-receiver
+WorkingDirectory=/opt/velvet-audio-studio
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+ExecStart=/opt/velvet-audio-studio/.venv/bin/velvet-audio serve-runtime --host 0.0.0.0 --port 8765 --database /var/lib/velvet-runtime-receiver/acknowledgements.sqlite3 --path /v1/events --health-path /health --bearer-token-file /etc/velvet-runtime-receiver/runtime.token
+
+Restart=on-failure
+RestartSec=2s
+RestartPreventExitStatus=2
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+
+StateDirectory=velvet-runtime-receiver
+StateDirectoryMode=0750
+RuntimeDirectory=velvet-runtime-receiver
+RuntimeDirectoryMode=0750
+UMask=0027
+
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

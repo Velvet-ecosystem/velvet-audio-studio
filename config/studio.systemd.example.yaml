@@ -1,0 +1,45 @@
+studio:
+  node_id: velvet-audio-pi3-01
+  host_adapter: raspberry_pi_3
+  hardware_adapter: audio_injector_octo
+  input_channels: 6
+  output_channels: 8
+
+capture:
+  source: alsa_octo
+  identity_terms:
+    - audioinjector
+    - octo
+  pcm_device: 0
+  use_plughw: false
+  sample_rate_hz: 48000
+  sample_format: S32_LE
+  period_frames: 480
+  heartbeat_interval_ms: 5000
+  idle_poll_seconds: 0.01
+  retry_journal: /var/lib/velvet-audio/runtime-retry.jsonl
+  max_pending_runtime_events: 1024
+  backlog_warning_ratio: 0.75
+  backlog_max_age_ms: 30000
+
+network:
+  transport: ethernet
+  event_protocol_transport: http_json
+  runtime_endpoint: http://velvet-runtime.local:8765/v1/events
+  request_timeout_seconds: 2.0
+  bearer_token_file: /etc/velvet-audio/runtime.token
+  max_response_bytes: 65536
+
+policy:
+  default_lease_seconds: 30
+  allow_direct_alsa_access: false
+  receipt_required: true
+  priorities:
+    ambience: 10
+    music: 20
+    media: 30
+    navigation: 50
+    call: 60
+    velvet_voice: 70
+    system_alert: 80
+    safety: 100
