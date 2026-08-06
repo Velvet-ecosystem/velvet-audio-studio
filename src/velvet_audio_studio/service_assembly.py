@@ -27,6 +27,10 @@ from velvet_audio_studio.simulated.capture_source import (
     SimulatedCaptureSource,
     simulated_six_channel_frame,
 )
+from velvet_audio_studio.voice.config import (
+    VoiceFrontEndServiceSettings,
+    load_voice_frontend_settings,
+)
 from velvet_audio_studio.voice.front_end import LocalVoiceFrontEnd
 
 
@@ -41,7 +45,8 @@ class AudioServiceAssembly:
     journal: JsonlRetryJournal
     retry_queue: DurableOrderedRetryQueue
     capture_supervisor: CaptureSupervisor
-    voice_frontend: LocalVoiceFrontEnd
+    voice_frontend_settings: VoiceFrontEndServiceSettings
+    voice_frontend: LocalVoiceFrontEnd | None
     backlog_supervisor: DurableBacklogSupervisor
     pipeline: ReliablePublishedCapturePipeline
     runner: ReliableAudioServiceRunner
@@ -50,6 +55,7 @@ class AudioServiceAssembly:
     def describe(self) -> dict[str, object]:
         resolution = self.capture_resolution
         network = self.config.network
+        voice = self.voice_frontend_settings
         return {
             "node_id": self.config.studio.node_id,
             "capture_source": self.config.capture.source,
@@ -57,7 +63,18 @@ class AudioServiceAssembly:
             "sample_format": self.config.capture.sample_format.value,
             "period_frames": self.config.capture.period_frames,
             "retry_journal": str(self.config.capture.retry_journal),
-            "voice_frontend_enabled": True,
+            "voice_frontend_enabled": voice.enabled,
+            "voice_activation_rms": voice.frontend.vad.activation_rms,
+            "voice_deactivation_rms": voice.frontend.vad.deactivation_rms,
+            "voice_activation_packets": voice.frontend.vad.activation_packets,
+            "voice_release_packets": voice.frontend.vad.release_packets,
+            "voice_pre_roll_ms": voice.frontend.utterance.pre_roll_ms,
+            "voice_minimum_utterance_ms": (
+                voice.frontend.utterance.minimum_duration_ms
+            ),
+            "voice_maximum_utterance_ms": (
+                voice.frontend.utterance.maximum_duration_ms
+            ),
             "network_transport": network.transport,
             "event_protocol_transport": network.event_protocol_transport,
             "runtime_endpoint": network.runtime_endpoint,
@@ -101,7 +118,12 @@ def build_audio_service(
         max_pending=config.capture.max_pending_runtime_events,
     )
     capture_supervisor = CaptureSupervisor()
-    voice_frontend = LocalVoiceFrontEnd()
+    voice_settings = load_voice_frontend_settings(config.config_path)
+    voice_frontend = (
+        LocalVoiceFrontEnd(voice_settings.frontend)
+        if voice_settings.enabled
+        else None
+    )
     backlog_supervisor = DurableBacklogSupervisor(
         retry_queue,
         capacity_warning_ratio=config.capture.backlog_warning_ratio,
@@ -129,6 +151,7 @@ def build_audio_service(
         journal=journal,
         retry_queue=retry_queue,
         capture_supervisor=capture_supervisor,
+        voice_frontend_settings=voice_settings,
         voice_frontend=voice_frontend,
         backlog_supervisor=backlog_supervisor,
         pipeline=pipeline,
