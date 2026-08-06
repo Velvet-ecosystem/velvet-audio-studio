@@ -93,13 +93,13 @@ Install the optional speech engine separately:
 python -m pip install -e '.[speech]'
 ```
 
-Provision a Vosk model locally, then enable the transcription section:
+Provision a root-owned Vosk model locally, then enable the transcription section:
 
 ```yaml
 transcription:
   enabled: true
   engine: vosk
-  model_path: /var/lib/velvet-audio/models/vosk-model-small-en-us-0.15
+  model_path: /usr/share/velvet-audio/models/vosk-model-small-en-us-0.15
   recognizer_sample_rate_hz: 16000
   include_words: true
   queue_capacity: 4
@@ -110,7 +110,7 @@ transcription:
     - princess
 ```
 
-The service never downloads models. Unmatched transcript text stays on the audio node. A matched wake name releases only the request text after the name, and the resulting event carries `command_authority: false`. Raw utterance samples never enter Runtime events.
+The service never downloads models and should not have write access to the model directory. Unmatched transcript text stays on the audio node. A matched wake name releases only the request text after the name, and the resulting event carries `command_authority: false`. Raw utterance samples never enter Runtime events.
 
 See `docs/offline_transcription.md` for model provisioning, event boundaries, worker behavior, privacy rules, and Raspberry Pi acceptance evidence.
 
