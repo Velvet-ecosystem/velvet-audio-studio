@@ -32,9 +32,26 @@ from velvet_audio_studio.voice.config import (
     load_voice_frontend_settings,
 )
 from velvet_audio_studio.voice.front_end import LocalVoiceFrontEnd
+from velvet_audio_studio.voice.speech_processor import LocalSpeechProcessor
+from velvet_audio_studio.voice.transcribing_service_runner import (
+    TranscribingAudioServiceRunner,
+)
+from velvet_audio_studio.voice.transcription import SpeechTranscriber
+from velvet_audio_studio.voice.transcription_config import (
+    TranscriptionServiceSettings,
+    load_transcription_settings,
+)
+from velvet_audio_studio.voice.transcription_worker import BoundedTranscriptionWorker
+from velvet_audio_studio.voice.vosk_transcriber import (
+    VoskOfflineTranscriber,
+    VoskTranscriberConfig,
+)
+from velvet_audio_studio.voice.wake_gate import WakeNameGate
 
 
 CaptureResolver = Callable[..., OctoCaptureResolution]
+SpeechTranscriberFactory = Callable[[VoskTranscriberConfig], SpeechTranscriber]
+AudioRunner = ReliableAudioServiceRunner | TranscribingAudioServiceRunner
 
 
 @dataclass(frozen=True)
@@ -47,15 +64,20 @@ class AudioServiceAssembly:
     capture_supervisor: CaptureSupervisor
     voice_frontend_settings: VoiceFrontEndServiceSettings
     voice_frontend: LocalVoiceFrontEnd | None
+    transcription_settings: TranscriptionServiceSettings
+    speech_processor: LocalSpeechProcessor | None
+    transcription_worker: BoundedTranscriptionWorker | None
     backlog_supervisor: DurableBacklogSupervisor
     pipeline: ReliablePublishedCapturePipeline
-    runner: ReliableAudioServiceRunner
+    runner: AudioRunner
     capture_resolution: OctoCaptureResolution | None
 
     def describe(self) -> dict[str, object]:
         resolution = self.capture_resolution
         network = self.config.network
         voice = self.voice_frontend_settings
+        transcription = self.transcription_settings
+        vosk = transcription.vosk
         return {
             "node_id": self.config.studio.node_id,
             "capture_source": self.config.capture.source,
@@ -69,12 +91,17 @@ class AudioServiceAssembly:
             "voice_activation_packets": voice.frontend.vad.activation_packets,
             "voice_release_packets": voice.frontend.vad.release_packets,
             "voice_pre_roll_ms": voice.frontend.utterance.pre_roll_ms,
-            "voice_minimum_utterance_ms": (
-                voice.frontend.utterance.minimum_duration_ms
+            "voice_minimum_utterance_ms": voice.frontend.utterance.minimum_duration_ms,
+            "voice_maximum_utterance_ms": voice.frontend.utterance.maximum_duration_ms,
+            "transcription_enabled": transcription.enabled,
+            "transcription_engine": transcription.engine,
+            "transcription_model_path": str(vosk.model_path) if vosk is not None else None,
+            "transcription_model_id": vosk.model_path.name if vosk is not None else None,
+            "transcription_sample_rate_hz": (
+                vosk.recognizer_sample_rate_hz if vosk is not None else None
             ),
-            "voice_maximum_utterance_ms": (
-                voice.frontend.utterance.maximum_duration_ms
-            ),
+            "transcription_queue_capacity": transcription.queue_capacity,
+            "transcription_wake_names": transcription.wake.names,
             "network_transport": network.transport,
             "event_protocol_transport": network.event_protocol_transport,
             "runtime_endpoint": network.runtime_endpoint,
@@ -101,6 +128,7 @@ def build_audio_service(
     publisher: RuntimeEventPublisher,
     *,
     capture_resolver: CaptureResolver = resolve_octo_capture,
+    transcriber_factory: SpeechTranscriberFactory = VoskOfflineTranscriber,
     simulated_items: Iterable[CaptureFrame | None | Exception] | None = None,
     clock_ns: Callable[[], int] = monotonic_ns,
     sleeper: Callable[[float], None] = sleep,
@@ -124,6 +152,25 @@ def build_audio_service(
         if voice_settings.enabled
         else None
     )
+    transcription_settings = load_transcription_settings(config.config_path)
+    if transcription_settings.enabled and voice_frontend is None:
+        raise ValueError("transcription requires voice_frontend.enabled to be true")
+
+    speech_processor: LocalSpeechProcessor | None = None
+    transcription_worker: BoundedTranscriptionWorker | None = None
+    if transcription_settings.enabled:
+        assert transcription_settings.vosk is not None
+        transcriber = transcriber_factory(transcription_settings.vosk)
+        speech_processor = LocalSpeechProcessor(
+            transcriber,
+            WakeNameGate(transcription_settings.wake),
+        )
+        transcription_worker = BoundedTranscriptionWorker(
+            speech_processor,
+            queue_capacity=transcription_settings.queue_capacity,
+            clock_ns=clock_ns,
+        )
+
     backlog_supervisor = DurableBacklogSupervisor(
         retry_queue,
         capacity_warning_ratio=config.capture.backlog_warning_ratio,
@@ -136,7 +183,7 @@ def build_audio_service(
         backlog_supervisor,
         voice_frontend=voice_frontend,
     )
-    runner = ReliableAudioServiceRunner(
+    base_runner = ReliableAudioServiceRunner(
         pipeline,
         capture_source,
         heartbeat_interval_ms=config.capture.heartbeat_interval_ms,
@@ -144,6 +191,15 @@ def build_audio_service(
         clock_ns=clock_ns,
         sleeper=sleeper,
     )
+    runner: AudioRunner = base_runner
+    if transcription_worker is not None:
+        runner = TranscribingAudioServiceRunner(
+            base_runner,
+            transcription_worker,
+            worker_stop_timeout_seconds=(
+                transcription_settings.worker_stop_timeout_seconds
+            ),
+        )
     return AudioServiceAssembly(
         config=config,
         capture_source=capture_source,
@@ -153,6 +209,9 @@ def build_audio_service(
         capture_supervisor=capture_supervisor,
         voice_frontend_settings=voice_settings,
         voice_frontend=voice_frontend,
+        transcription_settings=transcription_settings,
+        speech_processor=speech_processor,
+        transcription_worker=transcription_worker,
         backlog_supervisor=backlog_supervisor,
         pipeline=pipeline,
         runner=runner,
@@ -170,9 +229,7 @@ def _build_capture_source(
     capture = config.capture
     if capture.source == "simulated":
         items = tuple(simulated_items) if simulated_items is not None else (
-            _default_simulated_frame(
-                sample_rate_hz=capture.sample_rate_hz,
-            ),
+            _default_simulated_frame(sample_rate_hz=capture.sample_rate_hz),
         )
         return SimulatedCaptureSource(items, clock_ns=clock_ns), None
 
@@ -189,7 +246,6 @@ def _build_capture_source(
 
 
 def _default_simulated_frame(*, sample_rate_hz: int) -> CaptureFrame:
-    """Provide two complete six-channel frames with a clear driver microphone."""
     return simulated_six_channel_frame(
         (
             0.20,
