@@ -9,6 +9,12 @@ from velvet_audio_studio.voice.transcription import SpeechTranscript
 _TOKEN_RE = re.compile(r"[\w']+", re.UNICODE)
 
 
+def _normalized_text(value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError("wake-name text must be a string")
+    return " ".join(token.casefold() for token in _TOKEN_RE.findall(value))
+
+
 @dataclass(frozen=True)
 class WakeNameConfig:
     names: tuple[str, ...] = ("hey velvet", "velvet", "princess")
@@ -38,11 +44,10 @@ class WakeNameDecision:
 class WakeNameGate:
     """Release only transcripts explicitly addressed to a configured wake name."""
 
-    def __init__(self, config: WakeNameConfig = WakeNameConfig()) -> None:
-        self.config = config
+    def __init__(self, config: WakeNameConfig | None = None) -> None:
+        self.config = config or WakeNameConfig()
         self._wake_tokens = tuple(
-            (name, tuple(name.split()))
-            for name in self.config.names
+            (name, tuple(name.split())) for name in self.config.names
         )
 
     def evaluate(self, transcript: SpeechTranscript) -> WakeNameDecision:
@@ -74,9 +79,3 @@ class WakeNameGate:
             transcript_text=normalized,
             reason="wake name not present at transcript start",
         )
-
-
-def _normalized_text(value: str) -> str:
-    if not isinstance(value, str):
-        raise TypeError("wake-name text must be a string")
-    return " ".join(token.casefold() for token in _TOKEN_RE.findall(value))
