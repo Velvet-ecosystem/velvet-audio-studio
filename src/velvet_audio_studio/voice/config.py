@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 import yaml
 
+from velvet_audio_studio.service_config import AudioServiceConfigError
 from velvet_audio_studio.voice.front_end import LocalVoiceFrontEndConfig
 from velvet_audio_studio.voice.utterance import UtteranceCaptureConfig
 from velvet_audio_studio.voice.vad import VoiceActivityConfig
@@ -23,7 +24,7 @@ _ALLOWED_KEYS = frozenset({
 })
 
 
-class VoiceFrontEndConfigError(ValueError):
+class VoiceFrontEndConfigError(AudioServiceConfigError):
     pass
 
 
