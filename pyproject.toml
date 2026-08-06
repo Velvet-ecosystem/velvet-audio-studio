@@ -20,7 +20,7 @@ dev = [
   "ruff>=0.5",
 ]
 speech = [
-  "vosk>=0.3.50,<0.4",
+  "vosk>=0.3.45,<0.4",
 ]
 
 [tool.pytest.ini_options]
