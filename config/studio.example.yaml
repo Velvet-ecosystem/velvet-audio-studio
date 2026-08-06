@@ -32,6 +32,23 @@ voice_frontend:
   minimum_utterance_ms: 120
   maximum_utterance_ms: 12000
 
+transcription:
+  enabled: false
+  engine: vosk
+  model_path: /var/lib/velvet-audio/models/vosk-model-small-en-us-0.15
+  recognizer_sample_rate_hz: 16000
+  language: en-us
+  include_words: true
+  max_alternatives: 0
+  log_level: -1
+  grammar: []
+  queue_capacity: 4
+  worker_stop_timeout_seconds: 10.0
+  wake_names:
+    - hey velvet
+    - velvet
+    - princess
+
 network:
   transport: ethernet
   event_protocol_transport: stdout
