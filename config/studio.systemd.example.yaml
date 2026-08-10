@@ -22,6 +22,20 @@ capture:
   backlog_warning_ratio: 0.75
   backlog_max_age_ms: 30000
 
+playback:
+  enabled: false
+  source: alsa_octo
+  identity_terms:
+    - audioinjector
+    - octo
+  pcm_device: 0
+  use_plughw: false
+  sample_rate_hz: 48000
+  sample_format: S32_LE
+  period_frames: 480
+  default_output_channels:
+    - 4
+
 voice_frontend:
   enabled: true
   activation_rms: 0.03
