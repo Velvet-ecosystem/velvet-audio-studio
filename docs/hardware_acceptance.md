@@ -31,7 +31,7 @@ A Raspberry Pi and Audio Injector Octo node is not trusted merely because ALSA l
 7. Reboot and repeat discovery to prove stable startup.
 8. Save a receipt before marking the unit available.
 
-## Offline speech evidence
+## Offline transcription evidence
 
 When Vosk transcription is enabled, hardware acceptance also records:
 
@@ -46,7 +46,25 @@ When Vosk transcription is enabled, hardware acceptance also records:
 - false and missed wake-name results for `hey velvet`, `velvet`, and `princess`
 - worker restart and clean-shutdown results
 
-An x86 CI import proves packaging only. It does not accept the Raspberry Pi deployment.
+## Offline TTS evidence
+
+When Piper TTS is enabled, hardware acceptance also records:
+
+- 32-bit versus 64-bit userspace
+- Python, pip, Piper package, and ONNX Runtime versions
+- wheel or source-build provenance
+- local voice model/config identifiers, checksums, sizes, and licenses
+- cold voice-load time
+- resident memory before and after voice load
+- synthesis real-time factor for short, normal, and long responses
+- CPU temperature and throttling during repeated synthesis
+- concurrent capture plus synthesis behavior
+- synthesized PCM format and duration consistency
+- physical playback of every bounded delivery profile
+- distortion, underrun, clipping, and intelligibility under road/HVAC/music noise
+- clean synthesizer close/reload behavior
+
+An x86 CI import proves packaging only. It does not accept the Raspberry Pi deployment. Vosk and Piper must each pass on the exact pinned Pi image used with the Octo.
 
 ## Acceptance states
 
