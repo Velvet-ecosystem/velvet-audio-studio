@@ -12,6 +12,11 @@ from velvet_audio_studio.voice.front_end import (
     LocalVoiceFrontEndConfig,
     LocalVoiceFrontEndResult,
 )
+from velvet_audio_studio.voice.output_service import (
+    LocalSpeechOutputService,
+    SpeechOutputRequest,
+    SpeechOutputResult,
+)
 from velvet_audio_studio.voice.piper_synthesizer import (
     PiperOfflineSynthesizer,
     PiperSynthesizerConfig,
@@ -40,12 +45,15 @@ __all__ = [
     "DeliveryContext",
     "DeliveryProfile",
     "EnergyVoiceActivityDetector",
+    "LocalSpeechOutputService",
     "LocalVoiceFrontEnd",
     "LocalVoiceFrontEndConfig",
     "LocalVoiceFrontEndResult",
     "MAX_TTS_TEXT_CHARS",
     "PiperOfflineSynthesizer",
     "PiperSynthesizerConfig",
+    "SpeechOutputRequest",
+    "SpeechOutputResult",
     "SpeechSynthesisError",
     "SpeechSynthesisRequest",
     "SpeechSynthesizer",
