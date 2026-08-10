@@ -12,7 +12,9 @@ verified meaning
   -> speech request carries bounded delivery context
   -> Audio Studio resolves an acoustic delivery profile
   -> Piper renders local PCM
-  -> Audio Studio routing/playback owns the speaker path
+  -> Studio obtains a channel lease
+  -> Studio resamples and maps PCM into leased Octo slots
+  -> one Studio-owned ALSA playback stream reaches the speakers
 ```
 
 Language owns what is said. Audio Studio owns how approved text is rendered into audio and where that audio is routed. Piper does not decide facts, intent, permissions, persona policy, or actions.
@@ -46,9 +48,23 @@ tts:
   config_path: /usr/share/velvet-audio/voices/velvet.onnx.json
   use_cuda: false
   default_profile: owner_default
+
+playback:
+  enabled: true
+  source: alsa_octo
+  identity_terms:
+    - audioinjector
+    - octo
+  pcm_device: 0
+  use_plughw: false
+  sample_rate_hz: 48000
+  sample_format: S32_LE
+  period_frames: 480
+  default_output_channels:
+    - 4
 ```
 
-Configuration fails closed when TTS is enabled and either local voice file is missing. Unknown configuration keys and unknown delivery profiles are rejected.
+Configuration fails closed when TTS is enabled and either local voice file is missing. Unknown TTS keys and unknown delivery profiles are rejected. Playback remains disabled by default until the physical Octo is accepted. When enabled, playback validates the configured output slots and the service assembly probes the actual ALSA playback endpoint before creating the sink.
 
 ## Bounded delivery profiles
 
@@ -66,17 +82,31 @@ These profiles tune Piper's supported synthesis controls: phoneme length scale, 
 
 Safety context outranks requested style. An emergency request resolves to `emergency` even if a caller requests `playful_social`. Warning/critical context and high driving load similarly override lower-consequence style requests. `playful_social` requires explicit social permission.
 
+## Speaker bridge
+
+`LocalSpeechOutputService` is the composition boundary between approved speech and the Audio Studio output path. It synthesizes first so a slow TTS operation does not hold a speaker lease, then books the requested Studio output slots immediately before playback. The lease is always released, including when playback fails.
+
+`StudioSpeechPlaybackEngine` accepts Piper's mono S16_LE PCM, resamples it to the accepted playback rate, duplicates it only into the leased output slots, and writes interleaved multichannel periods to the sink. A normal Velvet voice can therefore target the configured center-voice slot while warning or emergency speech may request a different verified route.
+
+`AlsaOctoPlaybackSink` owns one persistent raw `aplay` process configured for the accepted eight-channel Octo PCM. Piper, Language, handmaidens, and individual features never open ALSA directly.
+
+The first bridge is deliberately serialized. It provides one-owner hardware access and bounded speech priority preemption without pretending a concurrent media mixer already exists. If higher-priority speech arrives while lower-priority speech is active, the lower-priority clip receives a cancellation request and stops at the next playback-period boundary. The later mixer can add simultaneous sources and ducking behind the same Studio lease and sink contracts.
+
+Playback results currently provide deterministic software evidence such as request ID, priority, output slots, source/playback sample rates, frame count, duration, and whether a clip was preempted. Production integration still needs these route/preemption/failure facts emitted through the Velvet receipt/event path.
+
 ## Resource and privacy bounds
 
 - synthesis requests are bounded to 4096 normalized text characters;
 - voice models are loaded lazily and remain local;
 - synthesized PCM remains inside the audio path unless an explicit diagnostic process saves it;
 - TTS metadata should prefer model ID, profile ID, duration, format, and text length rather than duplicating full spoken text into unrelated receipts;
-- synthesis failure must not grant authority or bypass deterministic safety fallback language.
+- synthesis failure must not grant authority or bypass deterministic safety fallback language;
+- playback only uses channels present in a valid Studio lease;
+- callers never receive a direct ALSA file/device handle.
 
 ## Raspberry Pi acceptance
 
-An x86 CI import proves package/API compatibility only. Before enabling Piper on the physical audio node, record:
+An x86 CI import proves package/API compatibility only. Before enabling Piper and playback on the physical audio node, record:
 
 - Raspberry Pi model and revision;
 - 32-bit versus 64-bit userspace;
@@ -89,12 +119,15 @@ An x86 CI import proves package/API compatibility only. Before enabling Piper on
 - synthesis real-time factor for short, normal, and long responses;
 - CPU temperature and throttling during repeated synthesis;
 - concurrent capture plus synthesis behavior;
+- actual Octo playback PCM name, sample format, sample rate, period size, and eight-channel capability;
+- center-voice and alternate-slot routing checks;
+- priority preemption behavior through the physical speaker path;
 - Octo playback stability while Piper is active;
-- clean stop/reload behavior;
+- clean sink and synthesizer stop/reload behavior;
 - each delivery profile through the physical speaker path.
 
 Do not assume a 32-bit ARM wheel is available. The deployment image must prove that its architecture, Python version, Piper package, and the known-good Audio Injector Octo kernel can coexist before TTS is marked accepted.
 
 ## Current boundary
 
-The repository now contains a lazy local Piper synthesizer, strict local voice configuration, bounded delivery profiles, safety-first profile resolution, PCM output contracts, service assembly, and tests. Final production work still has to connect synthesized PCM into the receipted Audio Studio playback/mixing path and connect Language's rendered expressions to the speech-request boundary.
+The repository now contains a lazy local Piper synthesizer, strict local voice configuration, bounded delivery profiles, safety-first profile resolution, shared PCM conversion, an identity-probed eight-channel Octo playback sink, preferred Studio output leases, a period-bounded priority-aware speech playback engine, configured service assembly, and tests. The remaining production boundaries are the neutral Language `RenderedExpression` to speech-request bridge, receipt/event emission for playback and preemption evidence, the later concurrent multi-source mixer, and physical Pi/Octo acceptance.
