@@ -121,12 +121,28 @@ class AlsaOctoPlaybackSink:
         return self.config.command()
 
     @property
+    def sample_rate_hz(self) -> int:
+        return self.config.sample_rate_hz
+
+    @property
+    def channels(self) -> int:
+        return self.config.channels
+
+    @property
+    def sample_format(self) -> AlsaPcmFormat:
+        return self.config.sample_format
+
+    @property
+    def period_frames(self) -> int:
+        return self.config.period_frames
+
+    @property
     def written_frames(self) -> int:
         return self._written_frames
 
     def open(self) -> None:
         if self._process is not None:
-            raise RuntimeError("ALSA Octo playback sink is already open")
+            return
         try:
             process = self.process_factory(self.command)
         except FileNotFoundError as exc:
