@@ -7,6 +7,13 @@ from velvet_audio_studio.voice.delivery_profiles import (
     delivery_profile_ids,
     select_delivery_profile,
 )
+from velvet_audio_studio.voice.expression_event import (
+    SPEECH_EXPRESSION_CONTRACT,
+    SPEECH_EXPRESSION_EVENT,
+    SPEECH_EXPRESSION_SCHEMA_VERSION,
+    SpeechExpressionEventError,
+    speech_output_request_from_event,
+)
 from velvet_audio_studio.voice.front_end import (
     LocalVoiceFrontEnd,
     LocalVoiceFrontEndConfig,
@@ -52,6 +59,10 @@ __all__ = [
     "MAX_TTS_TEXT_CHARS",
     "PiperOfflineSynthesizer",
     "PiperSynthesizerConfig",
+    "SPEECH_EXPRESSION_CONTRACT",
+    "SPEECH_EXPRESSION_EVENT",
+    "SPEECH_EXPRESSION_SCHEMA_VERSION",
+    "SpeechExpressionEventError",
     "SpeechOutputRequest",
     "SpeechOutputResult",
     "SpeechSynthesisError",
@@ -66,4 +77,5 @@ __all__ = [
     "delivery_profile",
     "delivery_profile_ids",
     "select_delivery_profile",
+    "speech_output_request_from_event",
 ]
