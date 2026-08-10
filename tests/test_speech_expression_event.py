@@ -7,6 +7,7 @@ from velvet_audio_studio.voice.expression_event import (
     SPEECH_EXPRESSION_CONTRACT,
     SPEECH_EXPRESSION_EVENT,
     SpeechExpressionEventError,
+    SpeechExpressionEventHandler,
     speech_output_request_from_event,
 )
 
@@ -55,6 +56,23 @@ def test_converts_language_event_to_audio_owned_request_without_physical_route()
     assert request.output_channels == ()
     assert request.speaker_id is None
     assert request.requester == "velvet-language"
+
+
+def test_handler_validates_then_calls_local_output_service() -> None:
+    observed = []
+    sentinel = object()
+
+    class FakeOutputService:
+        def speak(self, request):
+            observed.append(request)
+            return sentinel
+
+    handler = SpeechExpressionEventHandler(FakeOutputService())
+    result = handler.handle(_event())
+
+    assert result is sentinel
+    assert observed[0].text == "Mister, systems nominal."
+    assert observed[0].output_channels == ()
 
 
 def test_emergency_context_upgrades_audio_delivery_and_priority() -> None:
