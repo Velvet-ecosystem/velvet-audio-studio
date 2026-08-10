@@ -2,7 +2,7 @@
 
 Velvet’s shared multichannel audio organ for Raspberry Pi and Audio Injector Octo hardware.
 
-This repository owns studio booking, channel leases, routing, mixing policy, priority ducking, microphone capture, voice playback, alerts, music sessions, device health, local voice activity, bounded utterances, offline transcription, and the hardware adapters that connect Velvet to the Pi and Octo.
+This repository owns studio booking, channel leases, routing, mixing policy, priority ducking, microphone capture, voice playback, alerts, music sessions, device health, local voice activity, bounded utterances, offline transcription, local speech synthesis, bounded acoustic delivery profiles, and the hardware adapters that connect Velvet to the Pi and Octo.
 
 ## Initial hardware target
 
@@ -45,7 +45,7 @@ HTTP requests use canonical Event Protocol JSON with deterministic `Idempotency-
 
 Bearer tokens are read from the configured file for every publish, allowing token rotation without putting credentials in YAML or restarting the service.
 
-Validate configuration without touching ALSA hardware or loading a Vosk model:
+Validate configuration without touching ALSA hardware or loading speech models:
 
 ```bash
 velvet-audio validate-config --config config/studio.example.yaml
@@ -114,6 +114,32 @@ The service never downloads models and should not have write access to the model
 
 See `docs/offline_transcription.md` for model provisioning, event boundaries, worker behavior, privacy rules, and Raspberry Pi acceptance evidence.
 
+## Local Piper TTS and delivery styles
+
+Piper is the local speech synthesizer. Install it separately from Vosk:
+
+```bash
+python -m pip install -e '.[tts]'
+```
+
+Provision a local ONNX voice and its JSON configuration, then enable TTS:
+
+```yaml
+tts:
+  enabled: true
+  engine: piper
+  model_path: /usr/share/velvet-audio/voices/velvet.onnx
+  config_path: /usr/share/velvet-audio/voices/velvet.onnx.json
+  use_cuda: false
+  default_profile: owner_default
+```
+
+Audio Studio exposes bounded delivery profiles rather than free-form synthesis knobs: `owner_default`, `guest_reserved`, `high_driving_load`, `warning`, `emergency`, `quiet_night`, and `playful_social`. Emergency, warning/critical, and high-driving-load context override lower-consequence requested styles. A caller cannot turn emergency speech into a playful delivery merely by requesting a different profile.
+
+Language still owns the words. Piper only renders approved text into PCM; Audio Studio remains responsible for the eventual receipted playback path. The current TTS implementation is lazy, local, model-neutral behind its adapter, and does not download voice models.
+
+See `docs/offline_tts.md` for profile rules, resource bounds, model custody, Pi architecture notes, and hardware acceptance evidence.
+
 ## Reference Runtime receiver
 
 A small Runtime-side receiver is included for vehicle-LAN integration tests and durable-ingress development:
@@ -148,4 +174,4 @@ Audio-node installation steps are in `packaging/systemd/README.md`.
 
 ## Status
 
-The Audio Studio foundation, lifecycle-gated voice front end, bounded utterance capture, offline Vosk adapter, wake-name privacy gate, durable Event Protocol transport, Runtime ingress receiver, and ordered dispatch foundations are implemented. Physical Octo and Raspberry Pi acceptance remains hardware work.
+The Audio Studio foundation, lifecycle-gated voice front end, bounded utterance capture, offline Vosk adapter, wake-name privacy gate, lazy local Piper TTS adapter, bounded delivery profiles, durable Event Protocol transport, Runtime ingress receiver, and ordered dispatch foundations are implemented. Physical Octo, Vosk, and Piper acceptance on the target Raspberry Pi remain hardware work. Production TTS still needs the final synthesized-PCM-to-studio-playback bridge and the Language-to-speech-request bridge.
