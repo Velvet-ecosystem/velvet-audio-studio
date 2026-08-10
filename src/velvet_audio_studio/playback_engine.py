@@ -49,6 +49,7 @@ class StudioPlaybackResult:
     source_frames: int
     frames_written: int
     preempted: bool
+    preempted_by_request_id: str | None = None
 
     @property
     def playback_duration_ms(self) -> float:
@@ -57,8 +58,10 @@ class StudioPlaybackResult:
 
 @dataclass
 class _ActivePlayback:
+    request_id: str
     priority: AudioPriority
     cancel: Event
+    preempted_by_request_id: str | None = None
 
 
 class StudioSpeechPlaybackEngine:
@@ -96,22 +99,27 @@ class StudioSpeechPlaybackEngine:
             target_rate_hz=self.sink.sample_rate_hz,
         )
 
-        cancel = Event()
+        current = _ActivePlayback(
+            request_id=lease.request_id,
+            priority=lease.priority,
+            cancel=Event(),
+        )
         with self._state_lock:
             active = self._active
             if active is not None and lease.priority > active.priority:
+                active.preempted_by_request_id = lease.request_id
                 active.cancel.set()
 
         frames_written = 0
         preempted = False
         with self._write_lock:
             with self._state_lock:
-                self._active = _ActivePlayback(priority=lease.priority, cancel=cancel)
+                self._active = current
             try:
                 self.sink.open()
                 period = self.sink.period_frames
                 for start in range(0, len(samples), period):
-                    if cancel.is_set():
+                    if current.cancel.is_set():
                         preempted = True
                         break
                     chunk = samples[start : start + period]
@@ -124,7 +132,7 @@ class StudioSpeechPlaybackEngine:
                     frames_written += self.sink.write(payload)
             finally:
                 with self._state_lock:
-                    if self._active is not None and self._active.cancel is cancel:
+                    if self._active is current:
                         self._active = None
 
         return StudioPlaybackResult(
@@ -136,6 +144,9 @@ class StudioSpeechPlaybackEngine:
             source_frames=speech.frame_count,
             frames_written=frames_written,
             preempted=preempted,
+            preempted_by_request_id=(
+                current.preempted_by_request_id if preempted else None
+            ),
         )
 
     def close(self) -> None:
