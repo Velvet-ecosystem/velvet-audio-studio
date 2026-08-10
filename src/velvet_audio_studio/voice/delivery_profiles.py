@@ -26,6 +26,34 @@ class DeliveryProfile:
             raise ValueError("delivery noise_w_scale must be between 0 and 1")
 
 
+@dataclass(frozen=True)
+class DeliveryContext:
+    requested_profile_id: str = "owner_default"
+    severity: str = "informational"
+    driving_load: str = "low"
+    audience: str = "owner"
+    quiet_requested: bool = False
+    social_allowed: bool = False
+
+    def __post_init__(self) -> None:
+        requested = self.requested_profile_id.strip()
+        severity = self.severity.strip().casefold()
+        driving_load = self.driving_load.strip().casefold()
+        audience = self.audience.strip().casefold()
+        if not requested:
+            raise ValueError("requested_profile_id must be non-empty")
+        if severity not in {"casual", "informational", "warning", "critical", "emergency"}:
+            raise ValueError("unsupported delivery severity")
+        if driving_load not in {"low", "medium", "high"}:
+            raise ValueError("driving_load must be low, medium, or high")
+        if not audience:
+            raise ValueError("audience must be non-empty")
+        object.__setattr__(self, "requested_profile_id", requested)
+        object.__setattr__(self, "severity", severity)
+        object.__setattr__(self, "driving_load", driving_load)
+        object.__setattr__(self, "audience", audience)
+
+
 _PROFILES = {
     "owner_default": DeliveryProfile(
         profile_id="owner_default",
@@ -93,6 +121,24 @@ def delivery_profile(profile_id: str) -> DeliveryProfile:
         raise ValueError(
             f"unknown delivery profile {normalized!r}; supported profiles: {supported}"
         ) from exc
+
+
+def select_delivery_profile(context: DeliveryContext) -> DeliveryProfile:
+    """Resolve acoustic delivery while preventing style from weakening safety speech."""
+
+    if context.severity == "emergency":
+        return delivery_profile("emergency")
+    if context.severity in {"warning", "critical"}:
+        return delivery_profile("warning")
+    if context.driving_load == "high":
+        return delivery_profile("high_driving_load")
+    if context.audience != "owner":
+        return delivery_profile("guest_reserved")
+    if context.quiet_requested:
+        return delivery_profile("quiet_night")
+    if context.requested_profile_id == "playful_social" and not context.social_allowed:
+        return delivery_profile("owner_default")
+    return delivery_profile(context.requested_profile_id)
 
 
 def delivery_profile_ids() -> tuple[str, ...]:
