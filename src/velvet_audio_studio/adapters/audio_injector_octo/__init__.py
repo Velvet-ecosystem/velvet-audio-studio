@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from velvet_audio_studio.adapters.base import AudioHardwareHealth
+from velvet_audio_studio.adapters.alsa.pcm_format import AlsaPcmFormat
 
 from .alsa_capture import (
     AlsaCaptureConfig,
     AlsaCaptureError,
     AlsaOctoCaptureSource,
-    AlsaPcmFormat,
     decode_interleaved_pcm,
+)
+from .alsa_playback import (
+    AlsaOctoPlaybackSink,
+    AlsaPlaybackConfig,
+    AlsaPlaybackError,
 )
 from .capture_factory import (
     OctoCaptureResolution,
@@ -18,6 +23,11 @@ from .capture_factory import (
     stable_alsa_pcm_name,
 )
 from .channel_map import DEFAULT_TIBURON_MAP, OctoChannelMap
+from .playback_factory import (
+    OctoPlaybackResolution,
+    OctoPlaybackUnavailable,
+    resolve_octo_playback,
+)
 
 
 class AudioInjectorOctoAdapter:
@@ -57,13 +67,19 @@ __all__ = [
     "AlsaCaptureConfig",
     "AlsaCaptureError",
     "AlsaOctoCaptureSource",
+    "AlsaOctoPlaybackSink",
     "AlsaPcmFormat",
+    "AlsaPlaybackConfig",
+    "AlsaPlaybackError",
     "AudioInjectorOctoAdapter",
     "DEFAULT_TIBURON_MAP",
     "OctoCaptureResolution",
     "OctoCaptureUnavailable",
     "OctoChannelMap",
+    "OctoPlaybackResolution",
+    "OctoPlaybackUnavailable",
     "decode_interleaved_pcm",
     "resolve_octo_capture",
+    "resolve_octo_playback",
     "stable_alsa_pcm_name",
 ]
