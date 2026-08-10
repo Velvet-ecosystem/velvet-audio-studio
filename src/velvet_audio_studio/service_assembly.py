@@ -11,7 +11,13 @@ from velvet_audio_studio.adapters.audio_injector_octo.capture_factory import (
     OctoCaptureResolution,
     resolve_octo_capture,
 )
+from velvet_audio_studio.adapters.audio_injector_octo.playback_factory import (
+    OctoPlaybackResolution,
+    resolve_octo_playback,
+)
 from velvet_audio_studio.capture.supervisor import CaptureSupervisor
+from velvet_audio_studio.channel_registry import ChannelRegistry
+from velvet_audio_studio.playback_engine import StudioSpeechPlaybackEngine
 from velvet_audio_studio.runtime.backlog_supervisor import DurableBacklogSupervisor
 from velvet_audio_studio.runtime.capture_pipeline import ReliablePublishedCapturePipeline
 from velvet_audio_studio.runtime.durable_retry_queue import DurableOrderedRetryQueue
@@ -23,6 +29,7 @@ from velvet_audio_studio.runtime.service_runner import (
     ReliableAudioServiceRunner,
 )
 from velvet_audio_studio.service_config import AudioServiceConfig
+from velvet_audio_studio.session_manager import StudioSessionManager
 from velvet_audio_studio.simulated.capture_source import (
     SimulatedCaptureSource,
     simulated_six_channel_frame,
@@ -32,6 +39,7 @@ from velvet_audio_studio.voice.config import (
     load_voice_frontend_settings,
 )
 from velvet_audio_studio.voice.front_end import LocalVoiceFrontEnd
+from velvet_audio_studio.voice.output_service import LocalSpeechOutputService
 from velvet_audio_studio.voice.piper_synthesizer import (
     PiperOfflineSynthesizer,
     PiperSynthesizerConfig,
@@ -59,6 +67,7 @@ from velvet_audio_studio.voice.wake_gate import WakeNameGate
 
 
 CaptureResolver = Callable[..., OctoCaptureResolution]
+PlaybackResolver = Callable[..., OctoPlaybackResolution]
 SpeechTranscriberFactory = Callable[[VoskTranscriberConfig], SpeechTranscriber]
 SpeechSynthesizerFactory = Callable[[PiperSynthesizerConfig], SpeechSynthesizer]
 AudioRunner = ReliableAudioServiceRunner | TranscribingAudioServiceRunner
@@ -79,6 +88,9 @@ class AudioServiceAssembly:
     transcription_worker: BoundedTranscriptionWorker | None
     tts_settings: TtsServiceSettings
     speech_synthesizer: SpeechSynthesizer | None
+    playback_resolution: OctoPlaybackResolution | None
+    playback_engine: StudioSpeechPlaybackEngine | None
+    speech_output_service: LocalSpeechOutputService | None
     backlog_supervisor: DurableBacklogSupervisor
     pipeline: ReliablePublishedCapturePipeline
     runner: AudioRunner
@@ -86,12 +98,14 @@ class AudioServiceAssembly:
 
     def describe(self) -> dict[str, object]:
         resolution = self.capture_resolution
+        playback_resolution = self.playback_resolution
         network = self.config.network
         voice = self.voice_frontend_settings
         transcription = self.transcription_settings
         vosk = transcription.vosk
         tts = self.tts_settings
         piper = tts.piper
+        playback = self.config.playback
         return {
             "node_id": self.config.studio.node_id,
             "capture_source": self.config.capture.source,
@@ -122,6 +136,29 @@ class AudioServiceAssembly:
             "tts_model_id": piper.model_path.stem if piper is not None else None,
             "tts_default_profile": tts.default_profile,
             "tts_use_cuda": piper.use_cuda if piper is not None else None,
+            "playback_enabled": playback.enabled,
+            "playback_source": playback.source,
+            "playback_sample_rate_hz": playback.sample_rate_hz,
+            "playback_sample_format": playback.sample_format.value,
+            "playback_period_frames": playback.period_frames,
+            "playback_default_output_channels": playback.default_output_channels,
+            "playback_accepted": (
+                playback_resolution.accepted
+                if playback_resolution is not None
+                else None
+            ),
+            "playback_alsa_device": (
+                playback_resolution.config.device
+                if playback_resolution is not None
+                and playback_resolution.config is not None
+                else None
+            ),
+            "playback_degraded_reasons": (
+                playback_resolution.degraded_reasons
+                if playback_resolution is not None
+                else ()
+            ),
+            "speech_output_ready": self.speech_output_service is not None,
             "network_transport": network.transport,
             "event_protocol_transport": network.event_protocol_transport,
             "runtime_endpoint": network.runtime_endpoint,
@@ -142,12 +179,22 @@ class AudioServiceAssembly:
             ),
         }
 
+    def close_output(self) -> None:
+        if self.speech_output_service is not None:
+            self.speech_output_service.close()
+            return
+        if self.playback_engine is not None:
+            self.playback_engine.close()
+        if self.speech_synthesizer is not None:
+            self.speech_synthesizer.close()
+
 
 def build_audio_service(
     config: AudioServiceConfig,
     publisher: RuntimeEventPublisher,
     *,
     capture_resolver: CaptureResolver = resolve_octo_capture,
+    playback_resolver: PlaybackResolver = resolve_octo_playback,
     transcriber_factory: SpeechTranscriberFactory = VoskOfflineTranscriber,
     synthesizer_factory: SpeechSynthesizerFactory = PiperOfflineSynthesizer,
     simulated_items: Iterable[CaptureFrame | None | Exception] | None = None,
@@ -198,6 +245,32 @@ def build_audio_service(
         assert tts_settings.piper is not None
         speech_synthesizer = synthesizer_factory(tts_settings.piper)
 
+    playback_resolution: OctoPlaybackResolution | None = None
+    playback_engine: StudioSpeechPlaybackEngine | None = None
+    speech_output_service: LocalSpeechOutputService | None = None
+    if config.playback.enabled:
+        playback_resolution = playback_resolver(
+            identity_terms=config.playback.identity_terms,
+            pcm_device=config.playback.pcm_device,
+            plug=config.playback.use_plughw,
+            sample_rate_hz=config.playback.sample_rate_hz,
+            period_frames=config.playback.period_frames,
+            sample_format=config.playback.sample_format,
+        )
+        sink = playback_resolution.require_sink()
+        playback_engine = StudioSpeechPlaybackEngine(sink)
+        if speech_synthesizer is not None:
+            registry = ChannelRegistry(
+                input_count=config.studio.input_channels,
+                output_count=config.studio.output_channels,
+            )
+            speech_output_service = LocalSpeechOutputService(
+                speech_synthesizer,
+                StudioSessionManager(registry),
+                playback_engine,
+                default_output_channels=config.playback.default_output_channels,
+            )
+
     backlog_supervisor = DurableBacklogSupervisor(
         retry_queue,
         capacity_warning_ratio=config.capture.backlog_warning_ratio,
@@ -241,6 +314,9 @@ def build_audio_service(
         transcription_worker=transcription_worker,
         tts_settings=tts_settings,
         speech_synthesizer=speech_synthesizer,
+        playback_resolution=playback_resolution,
+        playback_engine=playback_engine,
+        speech_output_service=speech_output_service,
         backlog_supervisor=backlog_supervisor,
         pipeline=pipeline,
         runner=runner,
