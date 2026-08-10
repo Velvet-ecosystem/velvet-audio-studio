@@ -6,9 +6,15 @@ from types import SimpleNamespace
 import pytest
 
 from velvet_audio_studio.adapters.alsa.pcm_format import AlsaPcmFormat
+from velvet_audio_studio.runtime.output_evidence import (
+    AUDIO_OUTPUT_BOOKED,
+    AUDIO_OUTPUT_COMPLETED,
+    AUDIO_OUTPUT_STARTED,
+)
 from velvet_audio_studio.runtime.publisher import InMemoryRuntimePublisher
 from velvet_audio_studio.service_assembly import build_audio_service
 from velvet_audio_studio.service_config import AudioServiceConfigError, load_audio_service_config
+from velvet_audio_studio.voice.output_service import SpeechOutputRequest
 from velvet_audio_studio.voice.synthesis import SpeechSynthesisRequest, SynthesizedSpeech
 
 
@@ -149,8 +155,10 @@ def test_disabled_playback_requires_no_hardware_resolution(tmp_path: Path) -> No
 
     assert called is False
     assert assembly.playback_engine is None
+    assert assembly.output_evidence_emitter is None
     assert assembly.speech_output_service is None
     assert assembly.describe()["playback_enabled"] is False
+    assert assembly.describe()["output_evidence_enabled"] is False
 
 
 def test_enabled_playback_and_tts_assemble_full_local_speech_output_path(tmp_path: Path) -> None:
@@ -159,6 +167,7 @@ def test_enabled_playback_and_tts_assemble_full_local_speech_output_path(tmp_pat
     sink = FakeSink()
     observed: list[dict[str, object]] = []
     synthesizer = FakeSynthesizer()
+    runtime_publisher = InMemoryRuntimePublisher()
 
     def resolver(**kwargs):
         observed.append(kwargs)
@@ -166,19 +175,36 @@ def test_enabled_playback_and_tts_assemble_full_local_speech_output_path(tmp_pat
 
     assembly = build_audio_service(
         config,
-        InMemoryRuntimePublisher(),
+        runtime_publisher,
         playback_resolver=resolver,
         synthesizer_factory=lambda _config: synthesizer,
     )
 
     assert assembly.playback_engine is not None
+    assert assembly.output_evidence_emitter is not None
     assert assembly.speech_output_service is not None
     assert assembly.describe()["playback_accepted"] is True
     assert assembly.describe()["playback_alsa_device"] == "hw:CARD=fakeocto,DEV=0"
     assert assembly.describe()["speech_output_ready"] is True
+    assert assembly.describe()["output_evidence_enabled"] is True
+    assert assembly.describe()["output_evidence_publish_failures"] == 0
     assert observed[0]["sample_rate_hz"] == 48_000
     assert observed[0]["sample_format"] is AlsaPcmFormat.S32_LE
     assert observed[0]["period_frames"] == 480
+
+    assembly.speech_output_service.speak(
+        SpeechOutputRequest(
+            text="test",
+            expression_id="expression-assembly",
+            request_id="request-assembly",
+        )
+    )
+    assert [event.event for event in runtime_publisher.events] == [
+        AUDIO_OUTPUT_BOOKED,
+        AUDIO_OUTPUT_STARTED,
+        AUDIO_OUTPUT_COMPLETED,
+    ]
+    assert all("text" not in event.payload for event in runtime_publisher.events)
 
     assembly.close_output()
     assert sink.closed is True
