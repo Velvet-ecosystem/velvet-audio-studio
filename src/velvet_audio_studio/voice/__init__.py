@@ -12,6 +12,7 @@ from velvet_audio_studio.voice.expression_event import (
     SPEECH_EXPRESSION_EVENT,
     SPEECH_EXPRESSION_SCHEMA_VERSION,
     SpeechExpressionEventError,
+    SpeechExpressionEventHandler,
     speech_output_request_from_event,
 )
 from velvet_audio_studio.voice.front_end import (
@@ -63,6 +64,7 @@ __all__ = [
     "SPEECH_EXPRESSION_EVENT",
     "SPEECH_EXPRESSION_SCHEMA_VERSION",
     "SpeechExpressionEventError",
+    "SpeechExpressionEventHandler",
     "SpeechOutputRequest",
     "SpeechOutputResult",
     "SpeechSynthesisError",
