@@ -5,7 +5,11 @@ from typing import Any
 
 from velvet_audio_studio.contracts import AudioPriority
 from velvet_audio_studio.voice.delivery_profiles import DeliveryContext
-from velvet_audio_studio.voice.output_service import SpeechOutputRequest
+from velvet_audio_studio.voice.output_service import (
+    LocalSpeechOutputService,
+    SpeechOutputRequest,
+    SpeechOutputResult,
+)
 
 SPEECH_EXPRESSION_EVENT = "language.expression.speech_requested"
 SPEECH_EXPRESSION_CONTRACT = "velvet.speech-expression.v1"
@@ -47,6 +51,16 @@ _FORBIDDEN_KEYS = {
 
 class SpeechExpressionEventError(ValueError):
     pass
+
+
+class SpeechExpressionEventHandler:
+    """Validated Event Protocol edge into the local speech-output service."""
+
+    def __init__(self, output_service: LocalSpeechOutputService) -> None:
+        self.output_service = output_service
+
+    def handle(self, event: Mapping[str, Any]) -> SpeechOutputResult:
+        return self.output_service.speak(speech_output_request_from_event(event))
 
 
 def speech_output_request_from_event(event: Mapping[str, Any]) -> SpeechOutputRequest:
