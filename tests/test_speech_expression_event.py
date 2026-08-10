@@ -56,6 +56,7 @@ def test_converts_language_event_to_audio_owned_request_without_physical_route()
     assert request.output_channels == ()
     assert request.speaker_id is None
     assert request.requester == "velvet-language"
+    assert request.expression_id == "response-1"
 
 
 def test_handler_validates_then_calls_local_output_service() -> None:
@@ -73,6 +74,7 @@ def test_handler_validates_then_calls_local_output_service() -> None:
     assert result is sentinel
     assert observed[0].text == "Mister, systems nominal."
     assert observed[0].output_channels == ()
+    assert observed[0].expression_id == "response-1"
 
 
 def test_emergency_context_upgrades_audio_delivery_and_priority() -> None:
