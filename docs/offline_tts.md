@@ -92,7 +92,7 @@ Safety context outranks requested style. An emergency request resolves to `emerg
 
 The first bridge is deliberately serialized. It provides one-owner hardware access and bounded speech priority preemption without pretending a concurrent media mixer already exists. If higher-priority speech arrives while lower-priority speech is active, the lower-priority clip receives a cancellation request and stops at the next playback-period boundary. The later mixer can add simultaneous sources and ducking behind the same Studio lease and sink contracts.
 
-Playback results currently provide deterministic software evidence such as request ID, priority, output slots, source/playback sample rates, frame count, duration, and whether a clip was preempted. Production integration still needs these route/preemption/failure facts emitted through the Velvet receipt/event path.
+Playback results currently provide deterministic software evidence such as request ID, priority, output slots, source/playback sample rates, frame count, duration, and whether a clip was preempted. Those results are evidence objects, not Velvet Receipts. Production integration still needs them translated into Event Protocol/Receipts records for booking, playback completion, preemption, failure, and recovery.
 
 ## Resource and privacy bounds
 
