@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from velvet_audio_studio.voice.delivery_profiles import DeliveryContext
+
 
 MAX_TTS_TEXT_CHARS = 4096
 
@@ -16,6 +18,11 @@ class SpeechSynthesisRequest:
     text: str
     profile_id: str = "owner_default"
     speaker_id: int | None = None
+    severity: str = "informational"
+    driving_load: str = "low"
+    audience: str = "owner"
+    quiet_requested: bool = False
+    social_allowed: bool = False
 
     def __post_init__(self) -> None:
         normalized = " ".join(self.text.split())
@@ -25,12 +32,36 @@ class SpeechSynthesisRequest:
             raise ValueError(
                 f"speech synthesis text exceeds {MAX_TTS_TEXT_CHARS} characters"
             )
-        if not self.profile_id.strip():
-            raise ValueError("speech synthesis profile_id must be non-empty")
         if self.speaker_id is not None and self.speaker_id < 0:
             raise ValueError("speech synthesis speaker_id cannot be negative")
+        if not isinstance(self.quiet_requested, bool):
+            raise ValueError("quiet_requested must be true or false")
+        if not isinstance(self.social_allowed, bool):
+            raise ValueError("social_allowed must be true or false")
+        context = DeliveryContext(
+            requested_profile_id=self.profile_id,
+            severity=self.severity,
+            driving_load=self.driving_load,
+            audience=self.audience,
+            quiet_requested=self.quiet_requested,
+            social_allowed=self.social_allowed,
+        )
         object.__setattr__(self, "text", normalized)
-        object.__setattr__(self, "profile_id", self.profile_id.strip())
+        object.__setattr__(self, "profile_id", context.requested_profile_id)
+        object.__setattr__(self, "severity", context.severity)
+        object.__setattr__(self, "driving_load", context.driving_load)
+        object.__setattr__(self, "audience", context.audience)
+
+    @property
+    def delivery_context(self) -> DeliveryContext:
+        return DeliveryContext(
+            requested_profile_id=self.profile_id,
+            severity=self.severity,
+            driving_load=self.driving_load,
+            audience=self.audience,
+            quiet_requested=self.quiet_requested,
+            social_allowed=self.social_allowed,
+        )
 
 
 @dataclass(frozen=True)
