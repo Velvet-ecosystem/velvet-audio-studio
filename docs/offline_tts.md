@@ -17,9 +17,12 @@ verified meaning
   -> Studio obtains a channel lease
   -> Studio resamples and maps PCM into leased Octo slots
   -> one Studio-owned ALSA playback stream reaches the speakers
+  -> Audio Studio emits privacy-bounded output evidence
+  -> Runtime durable ingress acknowledgement
+  -> Velvet Receipts canonical evidence chain
 ```
 
-Language owns what is said. Audio Studio owns how approved text is rendered into audio and where that audio is routed. Piper does not decide facts, intent, permissions, persona policy, or actions.
+Language owns what is said. Audio Studio owns how approved text is rendered into audio and where that audio is routed. Piper does not decide facts, intent, permissions, persona policy, or actions. Event Protocol transports output evidence, and Velvet Receipts owns canonical evidence retention; neither creates authority.
 
 ## Speech expression event boundary
 
@@ -98,25 +101,51 @@ Safety context outranks requested style. An emergency request resolves to `emerg
 
 `LocalSpeechOutputService` is the composition boundary between approved speech and the Audio Studio output path. It synthesizes first so a slow TTS operation does not hold a speaker lease, then books the requested Studio output slots immediately before playback. The lease is always released, including when playback fails.
 
-Speech bookings opt into bounded output preemption. If the requested preferred slots are occupied only by strictly lower-priority output leases, `StudioSessionManager` releases those lower leases and grants the higher-priority request. Equal or higher-priority leases cannot be displaced, input-channel bookings are never displaced by this path, and ordinary Studio requests remain non-preemptive unless they explicitly opt in. This closes the safety gap where an emergency could otherwise be blocked by an existing center-voice lease.
+Speech bookings opt into bounded output preemption. If the requested preferred slots are occupied only by strictly lower-priority output leases, `StudioSessionManager` releases those lower leases and grants the higher-priority request. Equal or higher-priority leases cannot be displaced, input-channel bookings are never displaced by this path, and ordinary Studio requests remain non-preemptive unless they explicitly opt in. `StudioBookingResult` preserves the displaced lease identities so the evidence layer can report what was actually displaced.
 
-`StudioSpeechPlaybackEngine` accepts Piper's mono S16_LE PCM, resamples it to the accepted playback rate, duplicates it only into the leased output slots, and writes interleaved multichannel periods to the sink. A normal Velvet voice can therefore target the configured center-voice slot while warning or emergency speech may request a different verified route.
+`StudioSpeechPlaybackEngine` accepts Piper's mono S16_LE PCM, resamples it to the accepted playback rate, duplicates it only into the leased output slots, and writes interleaved multichannel periods to the sink. A normal Velvet voice can therefore target the configured center-voice slot while warning or emergency speech may request a different verified route. When higher-priority speech preempts a lower clip, the lower playback result preserves the incoming request ID that caused the preemption.
 
 `AlsaOctoPlaybackSink` owns one persistent raw `aplay` process configured for the accepted eight-channel Octo PCM. Piper, Language, handmaidens, and individual features never open ALSA directly.
 
 The first bridge is deliberately serialized. It provides one-owner hardware access and bounded speech priority preemption without pretending a concurrent media mixer already exists. If higher-priority speech arrives while lower-priority speech is active, the booking layer can take the lower output lease and the playback layer cancels the lower clip at the next playback-period boundary. The later mixer can add simultaneous sources and ducking behind the same Studio lease and sink contracts.
 
-Playback results currently provide deterministic software evidence such as request ID, priority, output slots, source/playback sample rates, frame count, duration, and whether a clip was preempted. Those results are evidence objects, not Velvet Receipts. Production integration still needs them translated into Event Protocol/Receipts records for booking, playback completion, preemption, failure, and recovery.
+## Output evidence and canonical receipts
+
+Audio Studio now emits the authority-free Event Protocol family `velvet.audio-output-evidence.v1` for:
+
+- `audio.output.booked`
+- `audio.output.started`
+- `audio.output.completed`
+- `audio.output.preempted`
+- `audio.output.failed`
+- `audio.output.recovered`
+
+The emitter uses the same `ReliablePublishedCapturePipeline.publish_events()` path as capture and voice-front-end service events. Output evidence therefore shares the existing durable ordered journal, backlog supervision, retry behavior, and Runtime acknowledgement path. There is no second audio evidence queue or private logger.
+
+Evidence includes operational identifiers and measurements such as request/expression IDs, priority, logical output slots, profile/model IDs, sample rates, frame counts, duration, displaced/preempting request IDs, and bounded failure/recovery classification. It deliberately excludes the spoken text, transcript, raw PCM, ALSA paths, voice-model filesystem paths, capability tokens, and authority fields.
+
+Failure events do not serialize raw exception messages because synthesis engines can echo input text into exceptions. Canonical evidence records only the failure stage and stable exception class. Detailed diagnostics belong in a protected local diagnostic log.
+
+Evidence publishing is not an audio-authority gate. A Runtime transport outage must not silence safety speech. Events are submitted to the existing durable Runtime pipeline; an unexpected internal publishing exception is retained as local emitter health state rather than being converted into permission to block the audio operation.
+
+`velvet-receipts` normalizes accepted output events into `velvet.receipts.audio-output.v1` and the existing append-only hash chain. A Runtime ingress acknowledgement and a canonical Velvet receipt are intentionally different evidence:
+
+- the Runtime acknowledgement proves durable ingress acceptance of the event;
+- the canonical Velvet receipt proves that accepted evidence was normalized into the append-only receipt chain.
+
+Neither grants permission to speak, execute, actuate, or own a channel.
 
 ## Resource and privacy bounds
 
 - synthesis requests are bounded to 4096 normalized text characters;
 - voice models are loaded lazily and remain local;
 - synthesized PCM remains inside the audio path unless an explicit diagnostic process saves it;
-- TTS metadata should prefer model ID, profile ID, duration, format, and text length rather than duplicating full spoken text into unrelated receipts;
+- canonical output evidence does not duplicate spoken text or raw audio;
+- failure receipts do not copy exception messages that could contain speech text;
 - synthesis failure must not grant authority or bypass deterministic safety fallback language;
 - playback only uses channels present in a valid Studio lease;
-- callers never receive a direct ALSA file/device handle.
+- callers never receive a direct ALSA file/device handle;
+- evidence publication failure does not become an implicit command/speech denial.
 
 ## Raspberry Pi acceptance
 
@@ -136,6 +165,7 @@ An x86 CI import proves package/API compatibility only. Before enabling Piper an
 - actual Octo playback PCM name, sample format, sample rate, period size, and eight-channel capability;
 - center-voice and alternate-slot routing checks;
 - priority preemption behavior through the physical speaker path;
+- output evidence ordering and Runtime retry during playback;
 - Octo playback stability while Piper is active;
 - clean sink and synthesizer stop/reload behavior;
 - each delivery profile through the physical speaker path.
@@ -144,4 +174,4 @@ Do not assume a 32-bit ARM wheel is available. The deployment image must prove t
 
 ## Current boundary
 
-The repository now contains a lazy local Piper synthesizer, strict local voice configuration, bounded delivery profiles, safety-first profile resolution, the speech-expression Event Protocol consumer, shared PCM conversion, an identity-probed eight-channel Octo playback sink, preferred and explicitly preemptive Studio output leases, a period-bounded priority-aware speech playback engine, configured service assembly, and tests. The remaining production boundaries are receipt/event emission for playback and preemption evidence, the later concurrent multi-source mixer, and physical Pi/Octo acceptance.
+The repository now contains a lazy local Piper synthesizer, strict local voice configuration, bounded delivery profiles, safety-first profile resolution, the speech-expression Event Protocol consumer, shared PCM conversion, an identity-probed eight-channel Octo playback sink, preferred and explicitly preemptive Studio output leases, a period-bounded priority-aware speech playback engine, privacy-bounded output lifecycle evidence routed through the existing durable Runtime pipeline, configured service assembly, and tests. `velvet-receipts` owns canonical normalization of that output evidence. Remaining production boundaries are deployed Runtime subscription/routing for incoming speech-expression events, the later concurrent multi-source mixer/ducking layer, and physical Pi/Octo acceptance.
