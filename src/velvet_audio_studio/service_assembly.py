@@ -32,7 +32,12 @@ from velvet_audio_studio.voice.config import (
     load_voice_frontend_settings,
 )
 from velvet_audio_studio.voice.front_end import LocalVoiceFrontEnd
+from velvet_audio_studio.voice.piper_synthesizer import (
+    PiperOfflineSynthesizer,
+    PiperSynthesizerConfig,
+)
 from velvet_audio_studio.voice.speech_processor import LocalSpeechProcessor
+from velvet_audio_studio.voice.synthesis import SpeechSynthesizer
 from velvet_audio_studio.voice.transcribing_service_runner import (
     TranscribingAudioServiceRunner,
 )
@@ -42,6 +47,10 @@ from velvet_audio_studio.voice.transcription_config import (
     load_transcription_settings,
 )
 from velvet_audio_studio.voice.transcription_worker import BoundedTranscriptionWorker
+from velvet_audio_studio.voice.tts_config import (
+    TtsServiceSettings,
+    load_tts_settings,
+)
 from velvet_audio_studio.voice.vosk_transcriber import (
     VoskOfflineTranscriber,
     VoskTranscriberConfig,
@@ -51,6 +60,7 @@ from velvet_audio_studio.voice.wake_gate import WakeNameGate
 
 CaptureResolver = Callable[..., OctoCaptureResolution]
 SpeechTranscriberFactory = Callable[[VoskTranscriberConfig], SpeechTranscriber]
+SpeechSynthesizerFactory = Callable[[PiperSynthesizerConfig], SpeechSynthesizer]
 AudioRunner = ReliableAudioServiceRunner | TranscribingAudioServiceRunner
 
 
@@ -67,6 +77,8 @@ class AudioServiceAssembly:
     transcription_settings: TranscriptionServiceSettings
     speech_processor: LocalSpeechProcessor | None
     transcription_worker: BoundedTranscriptionWorker | None
+    tts_settings: TtsServiceSettings
+    speech_synthesizer: SpeechSynthesizer | None
     backlog_supervisor: DurableBacklogSupervisor
     pipeline: ReliablePublishedCapturePipeline
     runner: AudioRunner
@@ -78,6 +90,8 @@ class AudioServiceAssembly:
         voice = self.voice_frontend_settings
         transcription = self.transcription_settings
         vosk = transcription.vosk
+        tts = self.tts_settings
+        piper = tts.piper
         return {
             "node_id": self.config.studio.node_id,
             "capture_source": self.config.capture.source,
@@ -102,6 +116,12 @@ class AudioServiceAssembly:
             ),
             "transcription_queue_capacity": transcription.queue_capacity,
             "transcription_wake_names": transcription.wake.names,
+            "tts_enabled": tts.enabled,
+            "tts_engine": tts.engine,
+            "tts_model_path": str(piper.model_path) if piper is not None else None,
+            "tts_model_id": piper.model_path.stem if piper is not None else None,
+            "tts_default_profile": tts.default_profile,
+            "tts_use_cuda": piper.use_cuda if piper is not None else None,
             "network_transport": network.transport,
             "event_protocol_transport": network.event_protocol_transport,
             "runtime_endpoint": network.runtime_endpoint,
@@ -129,6 +149,7 @@ def build_audio_service(
     *,
     capture_resolver: CaptureResolver = resolve_octo_capture,
     transcriber_factory: SpeechTranscriberFactory = VoskOfflineTranscriber,
+    synthesizer_factory: SpeechSynthesizerFactory = PiperOfflineSynthesizer,
     simulated_items: Iterable[CaptureFrame | None | Exception] | None = None,
     clock_ns: Callable[[], int] = monotonic_ns,
     sleeper: Callable[[float], None] = sleep,
@@ -171,6 +192,12 @@ def build_audio_service(
             clock_ns=clock_ns,
         )
 
+    tts_settings = load_tts_settings(config.config_path)
+    speech_synthesizer: SpeechSynthesizer | None = None
+    if tts_settings.enabled:
+        assert tts_settings.piper is not None
+        speech_synthesizer = synthesizer_factory(tts_settings.piper)
+
     backlog_supervisor = DurableBacklogSupervisor(
         retry_queue,
         capacity_warning_ratio=config.capture.backlog_warning_ratio,
@@ -212,6 +239,8 @@ def build_audio_service(
         transcription_settings=transcription_settings,
         speech_processor=speech_processor,
         transcription_worker=transcription_worker,
+        tts_settings=tts_settings,
+        speech_synthesizer=speech_synthesizer,
         backlog_supervisor=backlog_supervisor,
         pipeline=pipeline,
         runner=runner,
