@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from velvet_audio_studio.voice.delivery_profiles import delivery_profile
+from velvet_audio_studio.voice.delivery_profiles import select_delivery_profile
 from velvet_audio_studio.voice.synthesis import (
     SpeechSynthesisError,
     SpeechSynthesisRequest,
@@ -87,7 +87,7 @@ class PiperOfflineSynthesizer:
         assert self._voice is not None
         assert self._synthesis_config_class is not None
 
-        profile = delivery_profile(request.profile_id)
+        profile = select_delivery_profile(request.delivery_context)
         synth_config = self._synthesis_config_class(
             speaker_id=request.speaker_id,
             length_scale=profile.length_scale,
