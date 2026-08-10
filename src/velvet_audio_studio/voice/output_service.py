@@ -95,6 +95,7 @@ class LocalSpeechOutputService:
             priority=priority,
             output_channels=len(outputs),
             preferred_output_channels=outputs,
+            allow_preemption=True,
             metadata={
                 "source": "local_tts",
                 "delivery_profile": profile.profile_id,
