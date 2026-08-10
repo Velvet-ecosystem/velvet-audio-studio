@@ -33,9 +33,10 @@ A Raspberry Pi and Audio Injector Octo node is not trusted merely because ALSA l
 7. Verify the Studio-owned persistent `aplay` stream survives multiple sequential speech clips without reopening the device.
 8. Verify a center-voice lease reaches only the configured center-voice physical output.
 9. Verify an alternate two-slot route reaches only those two physical outputs.
-10. Verify safety-priority speech preempts lower-priority speech at a bounded period boundary without crashing or reopening ALSA.
-11. Reboot and repeat discovery to prove stable startup.
-12. Save a receipt before marking the unit available.
+10. Occupy the center-voice slot with lower-priority speech, then verify a safety-priority speech request explicitly takes that lease and the lower clip stops at the next playback-period boundary.
+11. Verify equal-priority or higher-priority occupancy is not displaced by the preemption path.
+12. Reboot and repeat discovery to prove stable startup.
+13. Save a receipt before marking the unit available.
 
 ## Offline transcription evidence
 
@@ -69,7 +70,7 @@ When Piper TTS is enabled, hardware acceptance also records:
 - source-to-playback resampling result on the accepted Octo rate
 - physical playback of every bounded delivery profile
 - preferred output-slot routing evidence
-- safety-preemption result through the real amps/speakers
+- occupied-slot safety-preemption result through the real amps/speakers
 - distortion, underrun, clipping, and intelligibility under road/HVAC/music noise
 - clean synthesizer and playback-sink close/reload behavior
 
