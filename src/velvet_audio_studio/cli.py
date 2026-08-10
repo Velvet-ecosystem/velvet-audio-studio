@@ -35,6 +35,10 @@ from velvet_audio_studio.voice.transcription_config import (
     TranscriptionServiceConfigError,
     load_transcription_settings,
 )
+from velvet_audio_studio.voice.tts_config import (
+    TtsServiceConfigError,
+    load_tts_settings,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         OctoCaptureUnavailable,
         RetryJournalError,
         TranscriptionServiceConfigError,
+        TtsServiceConfigError,
         VoiceFrontEndConfigError,
     ) as exc:
         print(f"velvet-audio: {exc}", file=sys.stderr)
@@ -204,6 +209,8 @@ def _run_service(args: argparse.Namespace) -> int:
             if assembly.transcription_worker is not None
             else None
         ),
+        "tts_enabled": assembly.tts_settings.enabled,
+        "tts_engine": assembly.tts_settings.engine,
         "shutdown_signal": latch.signal_number,
         "retry_journal": str(config.capture.retry_journal),
     }
@@ -268,6 +275,8 @@ def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
             "transcription requires voice_frontend.enabled to be true"
         )
     vosk = transcription.vosk
+    tts = load_tts_settings(config.config_path)
+    piper = tts.piper
     return {
         "config_path": str(config.config_path),
         "node_id": config.studio.node_id,
@@ -291,6 +300,12 @@ def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
         ),
         "transcription_queue_capacity": transcription.queue_capacity,
         "transcription_wake_names": transcription.wake.names,
+        "tts_enabled": tts.enabled,
+        "tts_engine": tts.engine,
+        "tts_model_path": str(piper.model_path) if piper is not None else None,
+        "tts_model_id": piper.model_path.stem if piper is not None else None,
+        "tts_default_profile": tts.default_profile,
+        "tts_use_cuda": piper.use_cuda if piper is not None else None,
         "network_transport": config.network.transport,
         "event_protocol_transport": config.network.event_protocol_transport,
         "runtime_endpoint": config.network.runtime_endpoint,
