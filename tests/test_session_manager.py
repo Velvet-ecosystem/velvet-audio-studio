@@ -31,15 +31,29 @@ def test_explicit_higher_priority_request_takes_conflicting_lower_output_lease()
         _request("low", AudioPriority.VELVET_VOICE, allow_preemption=False)
     )
 
-    high = manager.book(
+    booking = manager.book_with_result(
         _request("high", AudioPriority.SAFETY, allow_preemption=True)
     )
+    high = booking.lease
 
     assert low.request_id == "low"
     assert high.request_id == "high"
     assert high.output_channels == (4,)
+    assert booking.displaced_leases == (low,)
     assert registry.leases == (high,)
     assert manager.release("low") is None
+
+
+def test_nonpreemptive_booking_reports_no_displaced_leases() -> None:
+    registry = ChannelRegistry(input_count=6, output_count=8)
+    manager = StudioSessionManager(registry)
+
+    booking = manager.book_with_result(
+        _request("first", AudioPriority.VELVET_VOICE, allow_preemption=False)
+    )
+
+    assert booking.lease.request_id == "first"
+    assert booking.displaced_leases == ()
 
 
 def test_equal_priority_request_cannot_preempt_conflicting_lease() -> None:
