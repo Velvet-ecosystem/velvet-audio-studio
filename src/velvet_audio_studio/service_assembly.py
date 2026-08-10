@@ -21,6 +21,7 @@ from velvet_audio_studio.playback_engine import StudioSpeechPlaybackEngine
 from velvet_audio_studio.runtime.backlog_supervisor import DurableBacklogSupervisor
 from velvet_audio_studio.runtime.capture_pipeline import ReliablePublishedCapturePipeline
 from velvet_audio_studio.runtime.durable_retry_queue import DurableOrderedRetryQueue
+from velvet_audio_studio.runtime.output_evidence import AudioOutputEvidenceEmitter
 from velvet_audio_studio.runtime.publisher import RuntimeEventPublisher
 from velvet_audio_studio.runtime.retry_journal import JsonlRetryJournal
 from velvet_audio_studio.runtime.service_runner import (
@@ -90,6 +91,7 @@ class AudioServiceAssembly:
     speech_synthesizer: SpeechSynthesizer | None
     playback_resolution: OctoPlaybackResolution | None
     playback_engine: StudioSpeechPlaybackEngine | None
+    output_evidence_emitter: AudioOutputEvidenceEmitter | None
     speech_output_service: LocalSpeechOutputService | None
     backlog_supervisor: DurableBacklogSupervisor
     pipeline: ReliablePublishedCapturePipeline
@@ -159,6 +161,12 @@ class AudioServiceAssembly:
                 else ()
             ),
             "speech_output_ready": self.speech_output_service is not None,
+            "output_evidence_enabled": self.output_evidence_emitter is not None,
+            "output_evidence_publish_failures": (
+                len(self.output_evidence_emitter.publish_failures)
+                if self.output_evidence_emitter is not None
+                else 0
+            ),
             "network_transport": network.transport,
             "event_protocol_transport": network.event_protocol_transport,
             "runtime_endpoint": network.runtime_endpoint,
@@ -247,7 +255,6 @@ def build_audio_service(
 
     playback_resolution: OctoPlaybackResolution | None = None
     playback_engine: StudioSpeechPlaybackEngine | None = None
-    speech_output_service: LocalSpeechOutputService | None = None
     if config.playback.enabled:
         playback_resolution = playback_resolver(
             identity_terms=config.playback.identity_terms,
@@ -259,17 +266,6 @@ def build_audio_service(
         )
         sink = playback_resolution.require_sink()
         playback_engine = StudioSpeechPlaybackEngine(sink)
-        if speech_synthesizer is not None:
-            registry = ChannelRegistry(
-                input_count=config.studio.input_channels,
-                output_count=config.studio.output_channels,
-            )
-            speech_output_service = LocalSpeechOutputService(
-                speech_synthesizer,
-                StudioSessionManager(registry),
-                playback_engine,
-                default_output_channels=config.playback.default_output_channels,
-            )
 
     backlog_supervisor = DurableBacklogSupervisor(
         retry_queue,
@@ -283,6 +279,27 @@ def build_audio_service(
         backlog_supervisor,
         voice_frontend=voice_frontend,
     )
+
+    output_evidence_emitter: AudioOutputEvidenceEmitter | None = None
+    speech_output_service: LocalSpeechOutputService | None = None
+    if playback_engine is not None and speech_synthesizer is not None:
+        registry = ChannelRegistry(
+            input_count=config.studio.input_channels,
+            output_count=config.studio.output_channels,
+        )
+        output_evidence_emitter = AudioOutputEvidenceEmitter(
+            node_id=config.studio.node_id,
+            publish_events=pipeline.publish_events,
+            clock_ns=clock_ns,
+        )
+        speech_output_service = LocalSpeechOutputService(
+            speech_synthesizer,
+            StudioSessionManager(registry),
+            playback_engine,
+            default_output_channels=config.playback.default_output_channels,
+            evidence_emitter=output_evidence_emitter,
+        )
+
     base_runner = ReliableAudioServiceRunner(
         pipeline,
         capture_source,
@@ -316,6 +333,7 @@ def build_audio_service(
         speech_synthesizer=speech_synthesizer,
         playback_resolution=playback_resolution,
         playback_engine=playback_engine,
+        output_evidence_emitter=output_evidence_emitter,
         speech_output_service=speech_output_service,
         backlog_supervisor=backlog_supervisor,
         pipeline=pipeline,
