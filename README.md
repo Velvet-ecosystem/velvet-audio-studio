@@ -2,7 +2,7 @@
 
 Velvet’s shared multichannel audio organ for Raspberry Pi and Audio Injector Octo hardware.
 
-This repository owns studio booking, channel leases, routing, mixing policy, priority ducking, microphone capture, voice playback, alerts, music sessions, device health, local voice activity, bounded utterances, offline transcription, and the hardware adapters that connect Velvet to the Pi and Octo.
+This repository owns studio booking, channel leases, routing, mixing policy, priority handling, microphone capture, voice playback, alerts, music sessions, device health, local voice activity, bounded utterances, offline transcription, local speech synthesis, bounded acoustic delivery profiles, and the hardware adapters that connect Velvet to the Pi and Octo.
 
 ## Initial hardware target
 
@@ -13,7 +13,7 @@ This repository owns studio booking, channel leases, routing, mixing policy, pri
 
 ## Core rule
 
-No handmaiden or feature seizes ALSA hardware directly. Lyra, Echo, Temperance, navigation, calls, and Velvet’s main voice request routes through the studio. Safety-critical audio preempts or ducks lower-priority sessions, and every route remains observable and recoverable.
+No handmaiden or feature seizes ALSA hardware directly. Lyra, Echo, Temperance, navigation, calls, and Velvet’s main voice request route through the studio. Explicitly preemptive higher-priority speech can take conflicting lower-priority output leases, and the lower clip stops at a bounded playback-period boundary. Equal or higher-priority leases remain protected. The later concurrent mixer may add ducking without changing this ownership rule.
 
 ## Hardware boundary
 
@@ -41,17 +41,35 @@ network:
   max_response_bytes: 65536
 ```
 
+The playback section is disabled until the physical Pi/Octo passes hardware acceptance. When enabled, Audio Studio resolves the card by identity, probes the playback endpoint, and only then constructs the single-owner ALSA sink:
+
+```yaml
+playback:
+  enabled: false
+  source: alsa_octo
+  identity_terms:
+    - audioinjector
+    - octo
+  pcm_device: 0
+  use_plughw: false
+  sample_rate_hz: 48000
+  sample_format: S32_LE
+  period_frames: 480
+  default_output_channels:
+    - 4
+```
+
 HTTP requests use canonical Event Protocol JSON with deterministic `Idempotency-Key` and `X-Velvet-Event-ID` headers. Runtime must return a receipt identifier in JSON or a receipt header. A timeout, transport error, oversized response, or success without a receipt leaves the event in the durable ordered journal. A `409 Conflict` is treated as an acknowledged duplicate only when Runtime supplies the existing receipt.
 
 Bearer tokens are read from the configured file for every publish, allowing token rotation without putting credentials in YAML or restarting the service.
 
-Validate configuration without touching ALSA hardware or loading a Vosk model:
+Validate configuration without touching ALSA hardware or loading speech models:
 
 ```bash
 velvet-audio validate-config --config config/studio.example.yaml
 ```
 
-Resolve the configured source and print the assembly plan without opening it:
+Resolve configured hardware and print the assembly plan without booting the service:
 
 ```bash
 velvet-audio run --config config/studio.example.yaml --plan
@@ -81,7 +99,7 @@ Runtime modes:
 - `stdout` emits canonical Event Protocol JSONL for development.
 - `unavailable` intentionally rejects delivery so ordered events remain in the journal.
 
-SIGINT and SIGTERM request an orderly shutdown. Capture closes, local voice activity is cancelled, the transcription worker drains within its configured bound, stop events are generated in order, final delivery is attempted, and anything unacknowledged remains durable.
+SIGINT and SIGTERM request an orderly shutdown. Capture closes, local voice activity is cancelled, the transcription worker drains within its configured bound, the optional output path closes, stop events are generated in order, final delivery is attempted, and anything unacknowledged remains durable.
 
 ## Local voice and offline Vosk
 
@@ -113,6 +131,34 @@ transcription:
 The service never downloads models and should not have write access to the model directory. Unmatched transcript text stays on the audio node. A matched wake name releases only the request text after the name, and the resulting event carries `command_authority: false`. Raw utterance samples never enter Runtime events.
 
 See `docs/offline_transcription.md` for model provisioning, event boundaries, worker behavior, privacy rules, and Raspberry Pi acceptance evidence.
+
+## Local Piper TTS and delivery styles
+
+Piper is the local speech synthesizer. Install it separately from Vosk:
+
+```bash
+python -m pip install -e '.[tts]'
+```
+
+Provision a local ONNX voice and its JSON configuration, then enable TTS:
+
+```yaml
+tts:
+  enabled: true
+  engine: piper
+  model_path: /usr/share/velvet-audio/voices/velvet.onnx
+  config_path: /usr/share/velvet-audio/voices/velvet.onnx.json
+  use_cuda: false
+  default_profile: owner_default
+```
+
+Audio Studio exposes bounded delivery profiles rather than free-form synthesis knobs: `owner_default`, `guest_reserved`, `high_driving_load`, `warning`, `emergency`, `quiet_night`, and `playful_social`. Emergency, warning/critical, and high-driving-load context override lower-consequence requested styles. A caller cannot turn emergency speech into a playful delivery merely by requesting a different profile.
+
+Language still owns the words. Piper renders approved text into mono PCM. `LocalSpeechOutputService` resolves the bounded delivery profile, obtains an explicitly preemptive Studio speech lease, and passes the synthesized PCM to `StudioSpeechPlaybackEngine`. Strictly higher-priority speech can displace conflicting lower-priority output leases, while equal or higher-priority sessions remain protected. The engine resamples to the accepted playback rate, maps speech only into the leased Octo slots, and writes period-sized frames to one persistent `AlsaOctoPlaybackSink`/`aplay` stream. A displaced lower-priority clip stops at the next period boundary.
+
+This first speaker bridge is deliberately serialized. It proves one-owner ALSA playback and safety preemption without pretending the future concurrent music/voice/call mixer already exists.
+
+See `docs/offline_tts.md` for profile rules, resource bounds, model custody, speaker-path behavior, Pi architecture notes, and hardware acceptance evidence.
 
 ## Reference Runtime receiver
 
@@ -148,4 +194,4 @@ Audio-node installation steps are in `packaging/systemd/README.md`.
 
 ## Status
 
-The Audio Studio foundation, lifecycle-gated voice front end, bounded utterance capture, offline Vosk adapter, wake-name privacy gate, durable Event Protocol transport, Runtime ingress receiver, and ordered dispatch foundations are implemented. Physical Octo and Raspberry Pi acceptance remains hardware work.
+The Audio Studio foundation, lifecycle-gated voice front end, bounded utterance capture, offline Vosk adapter, wake-name privacy gate, lazy local Piper TTS adapter, bounded delivery profiles, Studio-owned multichannel ALSA speech playback bridge, explicit higher-priority lease preemption, durable Event Protocol transport, Runtime ingress receiver, and ordered dispatch foundations are implemented. Physical Octo, Vosk, and Piper acceptance on the target Raspberry Pi remain hardware work. Production voice still needs the neutral Language-to-speech-request bridge and receipted playback/preemption events; the later concurrent mixer will add multi-source ducking without giving callers direct ALSA access.

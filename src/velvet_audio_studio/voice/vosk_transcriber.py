@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from array import array
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
-from math import isfinite
 from pathlib import Path
-import sys
 from typing import Any
 
+from velvet_audio_studio.pcm import encode_pcm16_le, resample_linear
 from velvet_audio_studio.voice.transcription import (
     SpeechTranscript,
     SpeechTranscriptionError,
@@ -149,48 +147,6 @@ def _load_vosk_api() -> Any:
             "Vosk is not installed; install the velvet-audio-studio speech extra"
         ) from exc
     return vosk
-
-
-def resample_linear(
-    samples: Sequence[float],
-    *,
-    source_rate_hz: int,
-    target_rate_hz: int,
-) -> tuple[float, ...]:
-    if source_rate_hz <= 0 or target_rate_hz <= 0:
-        raise ValueError("sample rates must be positive")
-    normalized = tuple(float(sample) for sample in samples)
-    if any(not isfinite(sample) for sample in normalized):
-        raise ValueError("audio samples must be finite")
-    if not normalized or source_rate_hz == target_rate_hz:
-        return normalized
-
-    output_length = max(1, round(len(normalized) * target_rate_hz / source_rate_hz))
-    scale = source_rate_hz / target_rate_hz
-    output: list[float] = []
-    last_index = len(normalized) - 1
-    for output_index in range(output_length):
-        source_position = min(output_index * scale, last_index)
-        left = int(source_position)
-        right = min(left + 1, last_index)
-        fraction = source_position - left
-        output.append(
-            normalized[left] * (1.0 - fraction) + normalized[right] * fraction
-        )
-    return tuple(output)
-
-
-def encode_pcm16_le(samples: Sequence[float]) -> bytes:
-    pcm = array(
-        "h",
-        (
-            int(round(max(-1.0, min(1.0, float(sample))) * 32_767))
-            for sample in samples
-        ),
-    )
-    if sys.byteorder != "little":
-        pcm.byteswap()
-    return pcm.tobytes()
 
 
 def _decode_result(raw_result: object) -> Mapping[str, object]:

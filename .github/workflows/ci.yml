@@ -46,3 +46,22 @@ jobs:
 
       - name: Import Vosk native package
         run: python -c "import vosk; print(vosk.__file__)"
+
+  tts-import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install optional TTS dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[tts]'
+
+      - name: Import Piper package
+        run: python -c "from piper import PiperVoice, SynthesisConfig; print(PiperVoice, SynthesisConfig)"

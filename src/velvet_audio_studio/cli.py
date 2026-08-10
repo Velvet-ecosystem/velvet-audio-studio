@@ -9,6 +9,9 @@ from velvet_audio_studio.adapters.alsa.capability_probe import probe_pcm
 from velvet_audio_studio.adapters.audio_injector_octo.capture_factory import (
     OctoCaptureUnavailable,
 )
+from velvet_audio_studio.adapters.audio_injector_octo.playback_factory import (
+    OctoPlaybackUnavailable,
+)
 from velvet_audio_studio.diagnostics.probe import probe_json
 from velvet_audio_studio.runtime.acknowledgement_store import (
     AcknowledgementStoreError,
@@ -34,6 +37,10 @@ from velvet_audio_studio.voice.config import (
 from velvet_audio_studio.voice.transcription_config import (
     TranscriptionServiceConfigError,
     load_transcription_settings,
+)
+from velvet_audio_studio.voice.tts_config import (
+    TtsServiceConfigError,
+    load_tts_settings,
 )
 
 
@@ -61,8 +68,10 @@ def main(argv: list[str] | None = None) -> int:
         AcknowledgementStoreError,
         AudioServiceConfigError,
         OctoCaptureUnavailable,
+        OctoPlaybackUnavailable,
         RetryJournalError,
         TranscriptionServiceConfigError,
+        TtsServiceConfigError,
         VoiceFrontEndConfigError,
     ) as exc:
         print(f"velvet-audio: {exc}", file=sys.stderr)
@@ -119,7 +128,7 @@ def _parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--plan",
         action="store_true",
-        help="Resolve the configured source and print the assembly plan without booting",
+        help="Resolve configured hardware and print the assembly plan without booting",
     )
 
     receiver_parser = subparsers.add_parser(
@@ -186,11 +195,14 @@ def _run_service(args: argparse.Namespace) -> int:
         return 0
 
     latch = ShutdownSignalLatch()
-    with latch.installed():
-        result = assembly.runner.run(
-            stop_requested=latch.is_requested,
-            max_iterations=args.max_iterations,
-        )
+    try:
+        with latch.installed():
+            result = assembly.runner.run(
+                stop_requested=latch.is_requested,
+                max_iterations=args.max_iterations,
+            )
+    finally:
+        assembly.close_output()
     summary = {
         "node_id": config.studio.node_id,
         "iterations": len(result.iterations),
@@ -204,6 +216,10 @@ def _run_service(args: argparse.Namespace) -> int:
             if assembly.transcription_worker is not None
             else None
         ),
+        "tts_enabled": assembly.tts_settings.enabled,
+        "tts_engine": assembly.tts_settings.engine,
+        "playback_enabled": config.playback.enabled,
+        "speech_output_ready": assembly.speech_output_service is not None,
         "shutdown_signal": latch.signal_number,
         "retry_journal": str(config.capture.retry_journal),
     }
@@ -268,6 +284,8 @@ def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
             "transcription requires voice_frontend.enabled to be true"
         )
     vosk = transcription.vosk
+    tts = load_tts_settings(config.config_path)
+    piper = tts.piper
     return {
         "config_path": str(config.config_path),
         "node_id": config.studio.node_id,
@@ -281,6 +299,12 @@ def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
         "period_frames": config.capture.period_frames,
         "heartbeat_interval_ms": config.capture.heartbeat_interval_ms,
         "retry_journal": str(config.capture.retry_journal),
+        "playback_enabled": config.playback.enabled,
+        "playback_source": config.playback.source,
+        "playback_sample_rate_hz": config.playback.sample_rate_hz,
+        "playback_sample_format": config.playback.sample_format.value,
+        "playback_period_frames": config.playback.period_frames,
+        "playback_default_output_channels": config.playback.default_output_channels,
         "voice_frontend_enabled": voice.enabled,
         "transcription_enabled": transcription.enabled,
         "transcription_engine": transcription.engine,
@@ -291,6 +315,12 @@ def _config_summary(config: AudioServiceConfig) -> dict[str, object]:
         ),
         "transcription_queue_capacity": transcription.queue_capacity,
         "transcription_wake_names": transcription.wake.names,
+        "tts_enabled": tts.enabled,
+        "tts_engine": tts.engine,
+        "tts_model_path": str(piper.model_path) if piper is not None else None,
+        "tts_model_id": piper.model_path.stem if piper is not None else None,
+        "tts_default_profile": tts.default_profile,
+        "tts_use_cuda": piper.use_cuda if piper is not None else None,
         "network_transport": config.network.transport,
         "event_protocol_transport": config.network.event_protocol_transport,
         "runtime_endpoint": config.network.runtime_endpoint,

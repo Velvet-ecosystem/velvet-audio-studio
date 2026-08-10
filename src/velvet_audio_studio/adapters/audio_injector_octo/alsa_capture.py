@@ -3,34 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
 import subprocess
 from struct import iter_unpack
 from time import monotonic_ns
 from typing import BinaryIO, Callable, Protocol, Sequence
 
+from velvet_audio_studio.adapters.alsa.pcm_format import AlsaPcmFormat
 from velvet_audio_studio.runtime.service_runner import CaptureFrame
 
 
 class AlsaCaptureError(RuntimeError):
     pass
-
-
-class AlsaPcmFormat(StrEnum):
-    S16_LE = "S16_LE"
-    S32_LE = "S32_LE"
-
-    @property
-    def bytes_per_sample(self) -> int:
-        return 2 if self is AlsaPcmFormat.S16_LE else 4
-
-    @property
-    def normalizer(self) -> float:
-        return 32_768.0 if self is AlsaPcmFormat.S16_LE else 2_147_483_648.0
-
-    @property
-    def struct_format(self) -> str:
-        return "<h" if self is AlsaPcmFormat.S16_LE else "<i"
 
 
 @dataclass(frozen=True)

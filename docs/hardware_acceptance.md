@@ -12,11 +12,13 @@ A Raspberry Pi and Audio Injector Octo node is not trusted merely because ALSA l
 - playback and capture PCM names
 - supported channel counts
 - supported sample formats and rates
+- accepted playback period size
 - mixer controls
 - codec and clock status when observable
 - per-channel playback result
 - per-channel capture result
 - loopback or known-source result
+- concurrent capture/playback result
 - underrun, overrun, distortion, and clock-slip observations
 - final health state and degraded reason
 
@@ -28,10 +30,15 @@ A Raspberry Pi and Audio Injector Octo node is not trusted merely because ALSA l
 4. Capture a known signal through every physical input.
 5. Run concurrent capture and playback.
 6. Run a sustained stream long enough to expose clock or buffer instability.
-7. Reboot and repeat discovery to prove stable startup.
-8. Save a receipt before marking the unit available.
+7. Verify the Studio-owned persistent `aplay` stream survives multiple sequential speech clips without reopening the device.
+8. Verify a center-voice lease reaches only the configured center-voice physical output.
+9. Verify an alternate two-slot route reaches only those two physical outputs.
+10. Occupy the center-voice slot with lower-priority speech, then verify a safety-priority speech request explicitly takes that lease and the lower clip stops at the next playback-period boundary.
+11. Verify equal-priority or higher-priority occupancy is not displaced by the preemption path.
+12. Reboot and repeat discovery to prove stable startup.
+13. Save a receipt before marking the unit available.
 
-## Offline speech evidence
+## Offline transcription evidence
 
 When Vosk transcription is enabled, hardware acceptance also records:
 
@@ -46,7 +53,28 @@ When Vosk transcription is enabled, hardware acceptance also records:
 - false and missed wake-name results for `hey velvet`, `velvet`, and `princess`
 - worker restart and clean-shutdown results
 
-An x86 CI import proves packaging only. It does not accept the Raspberry Pi deployment.
+## Offline TTS evidence
+
+When Piper TTS is enabled, hardware acceptance also records:
+
+- 32-bit versus 64-bit userspace
+- Python, pip, Piper package, and ONNX Runtime versions
+- wheel or source-build provenance
+- local voice model/config identifiers, checksums, sizes, and licenses
+- cold voice-load time
+- resident memory before and after voice load
+- synthesis real-time factor for short, normal, and long responses
+- CPU temperature and throttling during repeated synthesis
+- concurrent capture plus synthesis behavior
+- synthesized PCM format and duration consistency
+- source-to-playback resampling result on the accepted Octo rate
+- physical playback of every bounded delivery profile
+- preferred output-slot routing evidence
+- occupied-slot safety-preemption result through the real amps/speakers
+- distortion, underrun, clipping, and intelligibility under road/HVAC/music noise
+- clean synthesizer and playback-sink close/reload behavior
+
+An x86 CI import proves packaging only. It does not accept the Raspberry Pi deployment. Vosk, Piper, the ALSA playback sink, and concurrent Octo capture/playback must each pass on the exact pinned Pi image used with the Octo.
 
 ## Acceptance states
 
