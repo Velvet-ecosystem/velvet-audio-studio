@@ -52,7 +52,7 @@ approved wording
 
 Piper never owns the sound device. The output service synthesizes before booking so model latency does not unnecessarily hold a speaker channel. Once synthesis is ready, Studio books the requested slots and the playback engine writes period-sized frames. A higher-priority request can cancel a lower-priority clip at the next period boundary.
 
-The current engine is intentionally serialized. Concurrent music, calls, navigation, alerts, and speech mixing/ducking remain a later mixer layer behind the same lease and single-owner ALSA boundary.
+The current engine is intentionally serialized. It is the first safe speaker bridge, not the final concurrent mixer. Concurrent music, calls, navigation, alerts, and speech mixing/ducking remain a later layer behind the same lease and single-owner ALSA boundary.
 
 ## Planned links
 
