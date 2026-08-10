@@ -4,7 +4,7 @@ import pytest
 
 from velvet_audio_studio.adapters.alsa.pcm_format import AlsaPcmFormat
 from velvet_audio_studio.channel_registry import ChannelRegistry
-from velvet_audio_studio.contracts import AudioPriority
+from velvet_audio_studio.contracts import AudioPriority, StudioRequest
 from velvet_audio_studio.pcm import encode_pcm16_le
 from velvet_audio_studio.playback_engine import StudioSpeechPlaybackEngine
 from velvet_audio_studio.session_manager import StudioSessionManager
@@ -121,6 +121,35 @@ def test_emergency_delivery_forces_emergency_voice_and_safety_priority() -> None
     assert synthesizer.requests[0].profile_id == "emergency"
     assert result.priority is AudioPriority.SAFETY
     assert result.playback.output_channels == (4, 6)
+    assert registry.leases == ()
+
+
+def test_emergency_speech_can_take_center_slot_from_lower_priority_lease() -> None:
+    service, synthesizer, registry, _ = _service()
+    low = registry.allocate(
+        StudioRequest(
+            requester="Navigation",
+            purpose="prompt",
+            priority=AudioPriority.NAVIGATION,
+            output_channels=1,
+            preferred_output_channels=(4,),
+            request_id="nav-low",
+        )
+    )
+
+    result = service.speak(
+        SpeechOutputRequest(
+            text="Driver unresponsive.",
+            delivery=DeliveryContext(severity="emergency"),
+            output_channels=(4,),
+        )
+    )
+
+    assert low.request_id == "nav-low"
+    assert synthesizer.requests[-1].profile_id == "emergency"
+    assert result.priority is AudioPriority.SAFETY
+    assert result.playback.output_channels == (4,)
+    assert registry.release("nav-low") is None
     assert registry.leases == ()
 
 
