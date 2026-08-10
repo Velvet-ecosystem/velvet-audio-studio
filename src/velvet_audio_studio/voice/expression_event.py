@@ -112,6 +112,7 @@ def speech_output_request_from_event(event: Mapping[str, Any]) -> SpeechOutputRe
         requester=_event_source(event),
         purpose="speech_expression",
         speaker_id=None,
+        expression_id=_text(payload, "expression_id"),
     )
 
 
