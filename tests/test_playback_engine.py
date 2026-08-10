@@ -91,6 +91,7 @@ def test_engine_routes_mono_speech_only_into_leased_octo_slots() -> None:
     assert result.frames_written == 2
     assert result.output_channels == (1, 4)
     assert result.preempted is False
+    assert result.preempted_by_request_id is None
     assert len(sink.payloads) == 1
 
     values = unpack("<16h", sink.payloads[0])
@@ -164,8 +165,10 @@ def test_higher_priority_speech_preempts_at_a_period_boundary() -> None:
     assert low.is_alive() is False
     assert high.is_alive() is False
     assert low_result[0].preempted is True
+    assert low_result[0].preempted_by_request_id == "safety-voice"
     assert low_result[0].frames_written == 1
     assert high_result[0].preempted is False
+    assert high_result[0].preempted_by_request_id is None
     assert high_result[0].frames_written == 2
 
 
