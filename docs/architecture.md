@@ -11,21 +11,22 @@ The studio is not owned by one handmaiden. Lyra, Echo, Temperance, navigation, c
 1. No caller opens ALSA devices directly.
 2. Every active route is represented by a channel lease.
 3. Safety audio outranks every other session.
-4. Higher-priority speech may preempt lower-priority speech at a bounded playback-period boundary.
-5. Hardware loss degrades audio without taking down Velvet Runtime.
-6. Hardware adapters report health honestly and never claim unavailable channels.
-7. Simulation and physical hardware use the same request and lease contracts.
-8. Route, gain, preemption, failure, and recovery actions must be receipted before production acceptance.
-9. Playback is disabled until the physical output path passes capability and signal acceptance.
+4. Lease preemption is explicit. A preemptive output-only request may displace conflicting leases only when they are strictly lower priority; equal or higher-priority leases stay protected.
+5. A displaced lower-priority speech clip stops at a bounded playback-period boundary.
+6. Hardware loss degrades audio without taking down Velvet Runtime.
+7. Hardware adapters report health honestly and never claim unavailable channels.
+8. Simulation and physical hardware use the same request and lease contracts.
+9. Route, gain, preemption, failure, and recovery actions must be receipted before production acceptance.
+10. Playback is disabled until the physical output path passes capability and signal acceptance.
 
 ## Current layers
 
-- `contracts.py`: hardware-neutral requests, priorities, preferred output slots, and leases.
+- `contracts.py`: hardware-neutral requests, priorities, preferred output slots, explicit preemption permission, and leases.
 - `channel_registry.py`: channel inventory and allocation.
-- `session_manager.py`: booking lifecycle.
+- `session_manager.py`: booking lifecycle and strictly higher-priority output-lease preemption.
 - `pcm.py`: shared PCM normalization, resampling, and channel routing helpers.
-- `playback_engine.py`: serialized Studio speech playback and bounded priority preemption.
-- `voice/output_service.py`: approved-text synthesis, lease acquisition, playback, and guaranteed release.
+- `playback_engine.py`: serialized Studio speech playback and bounded clip cancellation.
+- `voice/output_service.py`: approved-text synthesis, preemptive speech lease acquisition, playback, and guaranteed release.
 - `adapters/alsa/`: shared ALSA capability and PCM-format boundaries.
 - `adapters/audio_injector_octo/alsa_capture.py`: persistent six-channel capture process.
 - `adapters/audio_injector_octo/alsa_playback.py`: persistent eight-channel playback process.
@@ -50,7 +51,7 @@ approved wording
   -> amps / speakers
 ```
 
-Piper never owns the sound device. The output service synthesizes before booking so model latency does not unnecessarily hold a speaker channel. Once synthesis is ready, Studio books the requested slots and the playback engine writes period-sized frames. A higher-priority request can cancel a lower-priority clip at the next period boundary.
+Piper never owns the sound device. The output service synthesizes before booking so model latency does not unnecessarily hold a speaker channel. Once synthesis is ready, Studio books the requested slots. If those slots are occupied only by lower-priority output leases and the new request explicitly permits preemption, the session manager releases the lower leases and grants the higher request. The playback engine then cancels the displaced lower clip at the next period boundary and writes the higher-priority speech.
 
 The current engine is intentionally serialized. It is the first safe speaker bridge, not the final concurrent mixer. Concurrent music, calls, navigation, alerts, and speech mixing/ducking remain a later layer behind the same lease and single-owner ALSA boundary.
 
