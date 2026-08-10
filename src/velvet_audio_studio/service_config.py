@@ -44,6 +44,19 @@ class CaptureServiceConfig:
 
 
 @dataclass(frozen=True)
+class PlaybackServiceConfig:
+    enabled: bool
+    source: str
+    identity_terms: tuple[str, ...]
+    pcm_device: int
+    use_plughw: bool
+    sample_rate_hz: int
+    sample_format: AlsaPcmFormat
+    period_frames: int
+    default_output_channels: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class NetworkServiceConfig:
     transport: str
     event_protocol_transport: str
@@ -57,6 +70,7 @@ class NetworkServiceConfig:
 class AudioServiceConfig:
     studio: StudioIdentityConfig
     capture: CaptureServiceConfig
+    playback: PlaybackServiceConfig
     network: NetworkServiceConfig
     config_path: Path
 
@@ -81,6 +95,7 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
     root = _mapping(raw, "configuration root")
     studio_raw = _mapping(root.get("studio"), "studio")
     capture_raw = _mapping(root.get("capture"), "capture")
+    playback_raw = _mapping(root.get("playback", {}), "playback")
     network_raw = _mapping(root.get("network", {}), "network")
 
     studio = StudioIdentityConfig(
@@ -107,24 +122,16 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
     identity_terms_raw = capture_raw.get("identity_terms", ("audioinjector", "octo"))
     if identity_terms_raw is None and source == "simulated":
         identity_terms_raw = ()
-    if not isinstance(identity_terms_raw, (list, tuple)):
-        raise AudioServiceConfigError("capture.identity_terms must be a list of strings")
-    identity_terms = tuple(
-        _nonempty_text(term, f"capture.identity_terms[{index}]")
-        for index, term in enumerate(identity_terms_raw)
+    identity_terms = _string_tuple(
+        identity_terms_raw,
+        "capture.identity_terms",
+        allow_empty=source == "simulated",
     )
 
-    format_text = _nonempty_text(
+    sample_format = _pcm_format(
         capture_raw.get("sample_format", AlsaPcmFormat.S32_LE.value),
         "capture.sample_format",
     )
-    try:
-        sample_format = AlsaPcmFormat(format_text)
-    except ValueError as exc:
-        supported = ", ".join(member.value for member in AlsaPcmFormat)
-        raise AudioServiceConfigError(
-            f"capture.sample_format must be one of: {supported}"
-        ) from exc
 
     journal_path = _resolved_path(
         capture_raw.get("retry_journal", "runtime-retry.jsonl"),
@@ -169,6 +176,39 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
         ),
     )
 
+    playback = PlaybackServiceConfig(
+        enabled=_boolean(playback_raw.get("enabled", False), "playback.enabled"),
+        source=_playback_source(playback_raw.get("source", "alsa_octo")),
+        identity_terms=_string_tuple(
+            playback_raw.get("identity_terms", ("audioinjector", "octo")),
+            "playback.identity_terms",
+        ),
+        pcm_device=_nonnegative_int(
+            playback_raw.get("pcm_device", 0),
+            "playback.pcm_device",
+        ),
+        use_plughw=_boolean(
+            playback_raw.get("use_plughw", False),
+            "playback.use_plughw",
+        ),
+        sample_rate_hz=_positive_int(
+            playback_raw.get("sample_rate_hz", 48_000),
+            "playback.sample_rate_hz",
+        ),
+        sample_format=_pcm_format(
+            playback_raw.get("sample_format", AlsaPcmFormat.S32_LE.value),
+            "playback.sample_format",
+        ),
+        period_frames=_positive_int(
+            playback_raw.get("period_frames", 480),
+            "playback.period_frames",
+        ),
+        default_output_channels=_integer_tuple(
+            playback_raw.get("default_output_channels", (4,)),
+            "playback.default_output_channels",
+        ),
+    )
+
     endpoint_raw = network_raw.get("runtime_endpoint")
     endpoint = None if endpoint_raw is None else _nonempty_text(
         endpoint_raw,
@@ -199,10 +239,12 @@ def load_audio_service_config(path: str | Path) -> AudioServiceConfig:
     )
 
     _validate_capture(studio, capture)
+    _validate_playback(studio, playback)
     _validate_network(network)
     return AudioServiceConfig(
         studio=studio,
         capture=capture,
+        playback=playback,
         network=network,
         config_path=config_path,
     )
@@ -228,6 +270,36 @@ def _validate_capture(
         if studio.hardware_adapter != "audio_injector_octo":
             raise AudioServiceConfigError(
                 "capture.source alsa_octo requires studio.hardware_adapter audio_injector_octo"
+            )
+
+
+def _validate_playback(
+    studio: StudioIdentityConfig,
+    playback: PlaybackServiceConfig,
+) -> None:
+    if not playback.default_output_channels:
+        raise AudioServiceConfigError("playback.default_output_channels cannot be empty")
+    if len(set(playback.default_output_channels)) != len(playback.default_output_channels):
+        raise AudioServiceConfigError("playback.default_output_channels must be unique")
+    if any(
+        channel < 0 or channel >= studio.output_channels
+        for channel in playback.default_output_channels
+    ):
+        raise AudioServiceConfigError(
+            "playback.default_output_channels contains a channel outside studio.output_channels"
+        )
+    if playback.enabled and playback.source == "alsa_octo":
+        if not playback.identity_terms:
+            raise AudioServiceConfigError(
+                "playback.identity_terms cannot be empty for alsa_octo"
+            )
+        if studio.output_channels != 8:
+            raise AudioServiceConfigError(
+                "Audio Injector Octo playback requires studio.output_channels to equal 8"
+            )
+        if studio.hardware_adapter != "audio_injector_octo":
+            raise AudioServiceConfigError(
+                "playback.source alsa_octo requires studio.hardware_adapter audio_injector_octo"
             )
 
 
@@ -269,6 +341,13 @@ def _capture_source(value: Any) -> str:
     return source
 
 
+def _playback_source(value: Any) -> str:
+    source = _nonempty_text(value, "playback.source").casefold()
+    if source != "alsa_octo":
+        raise AudioServiceConfigError("playback.source must be alsa_octo")
+    return source
+
+
 def _event_protocol_transport(value: Any) -> str:
     transport = _nonempty_text(value, "network.event_protocol_transport").casefold()
     if transport not in {"stdout", "http_json", "unavailable"}:
@@ -278,12 +357,39 @@ def _event_protocol_transport(value: Any) -> str:
     return transport
 
 
+def _pcm_format(value: Any, name: str) -> AlsaPcmFormat:
+    text = _nonempty_text(value, name)
+    try:
+        return AlsaPcmFormat(text)
+    except ValueError as exc:
+        supported = ", ".join(member.value for member in AlsaPcmFormat)
+        raise AudioServiceConfigError(f"{name} must be one of: {supported}") from exc
+
+
 def _resolved_path(value: Any, name: str, *, config_path: Path) -> Path:
     text = _nonempty_text(value, name)
     path = Path(os.path.expandvars(text)).expanduser()
     if not path.is_absolute():
         path = config_path.parent / path
     return path.resolve()
+
+
+def _string_tuple(value: Any, name: str, *, allow_empty: bool = False) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise AudioServiceConfigError(f"{name} must be a list of strings")
+    values = tuple(
+        _nonempty_text(item, f"{name}[{index}]")
+        for index, item in enumerate(value)
+    )
+    if not values and not allow_empty:
+        raise AudioServiceConfigError(f"{name} cannot be empty")
+    return values
+
+
+def _integer_tuple(value: Any, name: str) -> tuple[int, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise AudioServiceConfigError(f"{name} must be a list of integers")
+    return tuple(_nonnegative_int(item, f"{name}[{index}]") for index, item in enumerate(value))
 
 
 def _nonempty_text(value: Any, name: str) -> str:
