@@ -27,9 +27,9 @@ class StudioRequest:
     priority: AudioPriority
     input_channels: int = 0
     output_channels: int = 0
-    preferred_output_channels: tuple[int, ...] = ()
     exclusive: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    preferred_output_channels: tuple[int, ...] = ()
     request_id: str = field(default_factory=lambda: str(uuid4()))
 
 
