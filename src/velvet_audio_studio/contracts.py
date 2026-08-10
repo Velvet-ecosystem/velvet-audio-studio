@@ -31,6 +31,7 @@ class StudioRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
     preferred_output_channels: tuple[int, ...] = ()
     request_id: str = field(default_factory=lambda: str(uuid4()))
+    allow_preemption: bool = False
 
 
 @dataclass(frozen=True, slots=True)
