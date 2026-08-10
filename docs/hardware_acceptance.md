@@ -12,11 +12,13 @@ A Raspberry Pi and Audio Injector Octo node is not trusted merely because ALSA l
 - playback and capture PCM names
 - supported channel counts
 - supported sample formats and rates
+- accepted playback period size
 - mixer controls
 - codec and clock status when observable
 - per-channel playback result
 - per-channel capture result
 - loopback or known-source result
+- concurrent capture/playback result
 - underrun, overrun, distortion, and clock-slip observations
 - final health state and degraded reason
 
@@ -28,8 +30,12 @@ A Raspberry Pi and Audio Injector Octo node is not trusted merely because ALSA l
 4. Capture a known signal through every physical input.
 5. Run concurrent capture and playback.
 6. Run a sustained stream long enough to expose clock or buffer instability.
-7. Reboot and repeat discovery to prove stable startup.
-8. Save a receipt before marking the unit available.
+7. Verify the Studio-owned persistent `aplay` stream survives multiple sequential speech clips without reopening the device.
+8. Verify a center-voice lease reaches only the configured center-voice physical output.
+9. Verify an alternate two-slot route reaches only those two physical outputs.
+10. Verify safety-priority speech preempts lower-priority speech at a bounded period boundary without crashing or reopening ALSA.
+11. Reboot and repeat discovery to prove stable startup.
+12. Save a receipt before marking the unit available.
 
 ## Offline transcription evidence
 
@@ -60,11 +66,14 @@ When Piper TTS is enabled, hardware acceptance also records:
 - CPU temperature and throttling during repeated synthesis
 - concurrent capture plus synthesis behavior
 - synthesized PCM format and duration consistency
+- source-to-playback resampling result on the accepted Octo rate
 - physical playback of every bounded delivery profile
+- preferred output-slot routing evidence
+- safety-preemption result through the real amps/speakers
 - distortion, underrun, clipping, and intelligibility under road/HVAC/music noise
-- clean synthesizer close/reload behavior
+- clean synthesizer and playback-sink close/reload behavior
 
-An x86 CI import proves packaging only. It does not accept the Raspberry Pi deployment. Vosk and Piper must each pass on the exact pinned Pi image used with the Octo.
+An x86 CI import proves packaging only. It does not accept the Raspberry Pi deployment. Vosk, Piper, the ALSA playback sink, and concurrent Octo capture/playback must each pass on the exact pinned Pi image used with the Octo.
 
 ## Acceptance states
 
