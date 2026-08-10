@@ -66,6 +66,16 @@ def _voice_files(tmp_path: Path) -> tuple[Path, Path]:
     return model, config
 
 
+def _synthesizer(tmp_path: Path) -> PiperOfflineSynthesizer:
+    model, config = _voice_files(tmp_path)
+    FakePiperVoice.loaded.clear()
+    FakePiperVoice.voice = FakeVoice()
+    return PiperOfflineSynthesizer(
+        PiperSynthesizerConfig(model_path=model, config_path=config),
+        api_loader=lambda: (FakePiperVoice, FakeSynthesisConfig),
+    )
+
+
 def test_named_profiles_are_bounded_and_safety_profiles_are_locked() -> None:
     ids = delivery_profile_ids()
     assert "owner_default" in ids
@@ -91,13 +101,9 @@ def test_request_normalizes_text_and_bounds_resource_use() -> None:
 
 
 def test_piper_synthesizer_lazily_loads_and_applies_named_profile(tmp_path: Path) -> None:
-    model, config = _voice_files(tmp_path)
-    FakePiperVoice.loaded.clear()
-    FakePiperVoice.voice = FakeVoice()
-    synthesizer = PiperOfflineSynthesizer(
-        PiperSynthesizerConfig(model_path=model, config_path=config),
-        api_loader=lambda: (FakePiperVoice, FakeSynthesisConfig),
-    )
+    synthesizer = _synthesizer(tmp_path)
+    model = synthesizer.config.model_path
+    config = synthesizer.config.config_path
 
     assert synthesizer.open_state is False
     result = synthesizer.synthesize(
@@ -108,7 +114,8 @@ def test_piper_synthesizer_lazily_loads_and_applies_named_profile(tmp_path: Path
     )
 
     assert synthesizer.open_state is True
-    assert FakePiperVoice.loaded == [(model.resolve(), config.resolve(), False)]
+    assert config is not None
+    assert FakePiperVoice.loaded == [(model, config, False)]
     assert result.model_id == "velvet"
     assert result.profile_id == "warning"
     assert result.sample_rate_hz == 22050
@@ -124,6 +131,35 @@ def test_piper_synthesizer_lazily_loads_and_applies_named_profile(tmp_path: Path
     assert synth_config.values["volume"] == profile.volume
     assert synth_config.values["noise_scale"] == profile.noise_scale
     assert synth_config.values["noise_w_scale"] == profile.noise_w_scale
+
+
+def test_emergency_context_cannot_be_downgraded_to_playful_style(tmp_path: Path) -> None:
+    synthesizer = _synthesizer(tmp_path)
+    result = synthesizer.synthesize(
+        SpeechSynthesisRequest(
+            "Critical system unavailable.",
+            profile_id="playful_social",
+            severity="emergency",
+            social_allowed=True,
+        )
+    )
+    assert result.profile_id == "emergency"
+    _, synth_config = FakePiperVoice.voice.calls[-1]
+    emergency = delivery_profile("emergency")
+    assert synth_config.values["length_scale"] == emergency.length_scale
+    assert synth_config.values["noise_scale"] == emergency.noise_scale
+
+
+def test_playful_profile_requires_explicit_social_permission(tmp_path: Path) -> None:
+    synthesizer = _synthesizer(tmp_path)
+    blocked = synthesizer.synthesize(
+        SpeechSynthesisRequest(
+            "That worked.",
+            profile_id="playful_social",
+            social_allowed=False,
+        )
+    )
+    assert blocked.profile_id == "owner_default"
 
 
 def test_missing_voice_files_fail_before_importing_piper(tmp_path: Path) -> None:
