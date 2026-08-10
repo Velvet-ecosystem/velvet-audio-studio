@@ -13,7 +13,7 @@ This repository owns studio booking, channel leases, routing, mixing policy, pri
 
 ## Core rule
 
-No handmaiden or feature seizes ALSA hardware directly. Lyra, Echo, Temperance, navigation, calls, and Velvet’s main voice request route through the studio. Safety-critical speech can preempt lower-priority speech at a bounded playback-period boundary. The later concurrent mixer may add ducking without changing this ownership rule.
+No handmaiden or feature seizes ALSA hardware directly. Lyra, Echo, Temperance, navigation, calls, and Velvet’s main voice request route through the studio. Explicitly preemptive higher-priority speech can take conflicting lower-priority output leases, and the lower clip stops at a bounded playback-period boundary. Equal or higher-priority leases remain protected. The later concurrent mixer may add ducking without changing this ownership rule.
 
 ## Hardware boundary
 
@@ -154,7 +154,7 @@ tts:
 
 Audio Studio exposes bounded delivery profiles rather than free-form synthesis knobs: `owner_default`, `guest_reserved`, `high_driving_load`, `warning`, `emergency`, `quiet_night`, and `playful_social`. Emergency, warning/critical, and high-driving-load context override lower-consequence requested styles. A caller cannot turn emergency speech into a playful delivery merely by requesting a different profile.
 
-Language still owns the words. Piper renders approved text into mono PCM. `LocalSpeechOutputService` resolves the bounded delivery profile, obtains a Studio channel lease, and passes the synthesized PCM to `StudioSpeechPlaybackEngine`. The engine resamples to the accepted playback rate, maps speech only into the leased Octo slots, and writes period-sized frames to one persistent `AlsaOctoPlaybackSink`/`aplay` stream. Higher-priority speech may preempt lower-priority speech at a period boundary.
+Language still owns the words. Piper renders approved text into mono PCM. `LocalSpeechOutputService` resolves the bounded delivery profile, obtains an explicitly preemptive Studio speech lease, and passes the synthesized PCM to `StudioSpeechPlaybackEngine`. Strictly higher-priority speech can displace conflicting lower-priority output leases, while equal or higher-priority sessions remain protected. The engine resamples to the accepted playback rate, maps speech only into the leased Octo slots, and writes period-sized frames to one persistent `AlsaOctoPlaybackSink`/`aplay` stream. A displaced lower-priority clip stops at the next period boundary.
 
 This first speaker bridge is deliberately serialized. It proves one-owner ALSA playback and safety preemption without pretending the future concurrent music/voice/call mixer already exists.
 
@@ -194,4 +194,4 @@ Audio-node installation steps are in `packaging/systemd/README.md`.
 
 ## Status
 
-The Audio Studio foundation, lifecycle-gated voice front end, bounded utterance capture, offline Vosk adapter, wake-name privacy gate, lazy local Piper TTS adapter, bounded delivery profiles, Studio-owned multichannel ALSA speech playback bridge, durable Event Protocol transport, Runtime ingress receiver, and ordered dispatch foundations are implemented. Physical Octo, Vosk, and Piper acceptance on the target Raspberry Pi remain hardware work. Production voice still needs the neutral Language-to-speech-request bridge and receipted playback/preemption events; the later concurrent mixer will add multi-source ducking without giving callers direct ALSA access.
+The Audio Studio foundation, lifecycle-gated voice front end, bounded utterance capture, offline Vosk adapter, wake-name privacy gate, lazy local Piper TTS adapter, bounded delivery profiles, Studio-owned multichannel ALSA speech playback bridge, explicit higher-priority lease preemption, durable Event Protocol transport, Runtime ingress receiver, and ordered dispatch foundations are implemented. Physical Octo, Vosk, and Piper acceptance on the target Raspberry Pi remain hardware work. Production voice still needs the neutral Language-to-speech-request bridge and receipted playback/preemption events; the later concurrent mixer will add multi-source ducking without giving callers direct ALSA access.
