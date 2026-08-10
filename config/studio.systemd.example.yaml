@@ -49,6 +49,14 @@ transcription:
     - velvet
     - princess
 
+tts:
+  enabled: false
+  engine: piper
+  model_path: /usr/share/velvet-audio/voices/velvet.onnx
+  config_path: /usr/share/velvet-audio/voices/velvet.onnx.json
+  use_cuda: false
+  default_profile: owner_default
+
 network:
   transport: ethernet
   event_protocol_transport: http_json
