@@ -9,7 +9,9 @@ The intended path is:
 ```text
 verified meaning
   -> Velvet Language chooses truthful wording
-  -> speech request carries bounded delivery context
+  -> language.expression.speech_requested
+  -> Runtime/Event Protocol routing
+  -> Audio Studio validates the expression event
   -> Audio Studio resolves an acoustic delivery profile
   -> Piper renders local PCM
   -> Studio obtains a channel lease
@@ -18,6 +20,16 @@ verified meaning
 ```
 
 Language owns what is said. Audio Studio owns how approved text is rendered into audio and where that audio is routed. Piper does not decide facts, intent, permissions, persona policy, or actions.
+
+## Speech expression event boundary
+
+`SpeechExpressionEventHandler` consumes the Event Protocol contract `velvet.speech-expression.v1` and event type `language.expression.speech_requested`. It validates the event again on the audio side before converting it to `SpeechOutputRequest` and entering `LocalSpeechOutputService`.
+
+The event may carry approved wording, severity, audience, driving load, emergency context, and bounded presentation hints. It must declare `command_authority: false`, `actuation_authority: false`, `hardware_selected: false`, and `synthesis_selected: false`.
+
+Audio Studio rejects events that try to smuggle in ALSA devices, output channel numbers, speaker IDs, voice-model paths, gain/volume/pitch/rate controls, Piper implementation knobs, capability tokens, executors, or authorization. Physical output slots therefore remain local Audio Studio configuration even when Language requests a named delivery posture.
+
+Emergency context is independently promoted to Audio Studio safety severity. A lower-consequence requested style cannot weaken the existing safety-first delivery profile selector.
 
 ## Local engine
 
@@ -132,4 +144,4 @@ Do not assume a 32-bit ARM wheel is available. The deployment image must prove t
 
 ## Current boundary
 
-The repository now contains a lazy local Piper synthesizer, strict local voice configuration, bounded delivery profiles, safety-first profile resolution, shared PCM conversion, an identity-probed eight-channel Octo playback sink, preferred and explicitly preemptive Studio output leases, a period-bounded priority-aware speech playback engine, configured service assembly, and tests. The remaining production boundaries are the neutral Language `RenderedExpression` to speech-request bridge, receipt/event emission for playback and preemption evidence, the later concurrent multi-source mixer, and physical Pi/Octo acceptance.
+The repository now contains a lazy local Piper synthesizer, strict local voice configuration, bounded delivery profiles, safety-first profile resolution, the speech-expression Event Protocol consumer, shared PCM conversion, an identity-probed eight-channel Octo playback sink, preferred and explicitly preemptive Studio output leases, a period-bounded priority-aware speech playback engine, configured service assembly, and tests. The remaining production boundaries are receipt/event emission for playback and preemption evidence, the later concurrent multi-source mixer, and physical Pi/Octo acceptance.
