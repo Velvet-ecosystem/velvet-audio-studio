@@ -62,10 +62,7 @@ def speech_output_request_from_envelope(
     nested = envelope.payload.get("speech_expression")
     if not isinstance(nested, Mapping):
         raise SpeechExpressionIngressError("speech_expression must be a mapping")
-    try:
-        request = speech_output_request_from_event(nested)
-    except ValueError as exc:
-        raise SpeechExpressionIngressError(str(exc)) from exc
+    request = speech_output_request_from_event(nested)
     if request.expression_id is None:
         raise SpeechExpressionIngressError("speech expression identity is required")
     return request
