@@ -95,7 +95,7 @@ def test_http_acceptance_and_local_dispatch_remain_distinct_truths(tmp_path):
     accepted_body = json.loads(accepted.body)
 
     assert accepted.status == 202
-    assert accepted_body["receipt_id"].startswith("runtime-ingress-")
+    assert accepted_body["receipt_id"].startswith("runtime-receipt-")
     assert output.requests == []
     assert components.queue.stats().pending == 1
 
