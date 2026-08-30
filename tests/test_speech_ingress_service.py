@@ -1,3 +1,4 @@
+from copy import deepcopy
 import json
 
 from velvet_audio_studio.runtime.event_protocol import (
@@ -50,13 +51,14 @@ def _speech_event():
     }
 
 
-def _envelope():
+def _envelope(event=None):
+    nested = _speech_event() if event is None else event
     return EventProtocolEnvelope(
         event_type=SPEECH_EXPRESSION_EVENT,
         source_id="velvet-runtime.speech-egress",
         sequence=7,
         occurred_at_monotonic_ns=987_654,
-        payload={"speech_expression": _speech_event()},
+        payload={"speech_expression": nested},
     )
 
 
@@ -128,6 +130,25 @@ def test_duplicate_http_delivery_does_not_create_second_acoustic_attempt(tmp_pat
     assert duplicate_body["duplicate"] is True
     assert len(output.requests) == 1
     assert components.dispatcher.process_one().state is DispatchCycleState.IDLE
+
+
+def test_invalid_speech_is_rejected_before_acknowledgement_or_dispatch(tmp_path):
+    output = RecordingOutput()
+    components = build_speech_ingress_components(
+        tmp_path / "speech.sqlite3",
+        output,
+    )
+    event = deepcopy(_speech_event())
+    event["payload"]["capability_token"] = "forbidden"
+
+    response = _post(components, _envelope(event))
+    body = json.loads(response.body)
+
+    assert response.status == 422
+    assert body["error"] == "event_payload_rejected"
+    assert components.store.count() == 0
+    assert components.queue.stats().pending == 0
+    assert output.requests == []
 
 
 def test_receiver_rejects_transport_payload_that_exceeds_speech_limit(tmp_path):
