@@ -7,7 +7,7 @@ from hmac import compare_digest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 from velvet_audio_studio.runtime.acknowledgement_store import (
     AcknowledgementConflictError,
@@ -18,6 +18,9 @@ from velvet_audio_studio.runtime.event_protocol import (
     EventProtocolEnvelope,
     event_protocol_idempotency_key,
 )
+
+
+EnvelopeValidator = Callable[[EventProtocolEnvelope], None]
 
 
 @dataclass(frozen=True)
@@ -38,6 +41,7 @@ class EventProtocolReceiver:
         health_path: str = "/health",
         max_request_bytes: int = 1_048_576,
         bearer_token_file: str | Path | None = None,
+        envelope_validator: EnvelopeValidator | None = None,
     ) -> None:
         if not endpoint_path.startswith("/") or "?" in endpoint_path or "#" in endpoint_path:
             raise ValueError("receiver endpoint path must be an absolute URL path")
@@ -56,6 +60,7 @@ class EventProtocolReceiver:
             if bearer_token_file is None
             else Path(bearer_token_file).expanduser().resolve()
         )
+        self.envelope_validator = envelope_validator
 
     def accept(
         self,
@@ -103,6 +108,15 @@ class EventProtocolReceiver:
                 400,
                 {"error": "invalid_event_protocol_envelope", "detail": str(exc)},
             )
+
+        if self.envelope_validator is not None:
+            try:
+                self.envelope_validator(envelope)
+            except ValueError as exc:
+                return _json_response(
+                    422,
+                    {"error": "event_payload_rejected", "detail": str(exc)},
+                )
 
         idempotency_key = (_header(headers, "Idempotency-Key") or "").strip()
         velvet_event_id = (_header(headers, "X-Velvet-Event-ID") or "").strip()
