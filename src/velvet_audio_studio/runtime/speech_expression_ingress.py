@@ -48,6 +48,24 @@ class SpeechOutputSink(Protocol):
         ...
 
 
+def speech_output_request_from_envelope(
+    envelope: EventProtocolEnvelope,
+) -> SpeechOutputRequest:
+    """Validate both the transport wrapper and nested shared speech contract."""
+
+    if envelope.event_type != SPEECH_EXPRESSION_EVENT:
+        raise ValueError("ingress event is not a speech expression")
+    if set(envelope.payload) != {"speech_expression"}:
+        raise ValueError("speech ingress payload must contain only speech_expression")
+    nested = envelope.payload.get("speech_expression")
+    if not isinstance(nested, Mapping):
+        raise ValueError("speech_expression must be a mapping")
+    request = speech_output_request_from_event(nested)
+    if request.expression_id is None:
+        raise ValueError("speech expression identity is required")
+    return request
+
+
 class SqliteSpeechDeliveryLedger:
     """Store speech-attempt state without persisting spoken text."""
 
@@ -276,19 +294,8 @@ class SpeechExpressionIngressHandler:
         ingress_receipt_id: str,
     ) -> str:
         del ingress_receipt_id
-        if envelope.event_type != SPEECH_EXPRESSION_EVENT:
-            raise SpeechExpressionIngressError("ingress event is not a speech expression")
-        if set(envelope.payload) != {"speech_expression"}:
-            raise SpeechExpressionIngressError(
-                "speech ingress payload must contain only speech_expression"
-            )
-        nested = envelope.payload.get("speech_expression")
-        if not isinstance(nested, Mapping):
-            raise SpeechExpressionIngressError("speech_expression must be a mapping")
-
-        request = speech_output_request_from_event(nested)
-        if request.expression_id is None:
-            raise SpeechExpressionIngressError("speech expression identity is required")
+        request = speech_output_request_from_envelope(envelope)
+        nested = envelope.payload["speech_expression"]
         event_digest = _event_digest(nested)
         decision = self.ledger.begin(
             expression_id=request.expression_id,
