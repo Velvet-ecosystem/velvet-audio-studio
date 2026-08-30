@@ -18,7 +18,7 @@ from typing import Mapping, Protocol
 
 from velvet_audio_studio.runtime.event_protocol import EventProtocolEnvelope
 from velvet_audio_studio.voice.expression_event import (
-    SPEECH_EVENT_TYPE,
+    SPEECH_EXPRESSION_EVENT,
     speech_output_request_from_event,
 )
 from velvet_audio_studio.voice.output_service import SpeechOutputRequest
@@ -276,7 +276,7 @@ class SpeechExpressionIngressHandler:
         ingress_receipt_id: str,
     ) -> str:
         del ingress_receipt_id
-        if envelope.event_type != SPEECH_EVENT_TYPE:
+        if envelope.event_type != SPEECH_EXPRESSION_EVENT:
             raise SpeechExpressionIngressError("ingress event is not a speech expression")
         if set(envelope.payload) != {"speech_expression"}:
             raise SpeechExpressionIngressError(
