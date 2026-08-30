@@ -24,7 +24,7 @@ from velvet_audio_studio.voice.expression_event import (
 from velvet_audio_studio.voice.output_service import SpeechOutputRequest
 
 
-class SpeechExpressionIngressError(RuntimeError):
+class SpeechExpressionIngressError(ValueError):
     """Raised when accepted speech cannot be dispatched safely."""
 
 
@@ -54,15 +54,20 @@ def speech_output_request_from_envelope(
     """Validate both the transport wrapper and nested shared speech contract."""
 
     if envelope.event_type != SPEECH_EXPRESSION_EVENT:
-        raise ValueError("ingress event is not a speech expression")
+        raise SpeechExpressionIngressError("ingress event is not a speech expression")
     if set(envelope.payload) != {"speech_expression"}:
-        raise ValueError("speech ingress payload must contain only speech_expression")
+        raise SpeechExpressionIngressError(
+            "speech ingress payload must contain only speech_expression"
+        )
     nested = envelope.payload.get("speech_expression")
     if not isinstance(nested, Mapping):
-        raise ValueError("speech_expression must be a mapping")
-    request = speech_output_request_from_event(nested)
+        raise SpeechExpressionIngressError("speech_expression must be a mapping")
+    try:
+        request = speech_output_request_from_event(nested)
+    except ValueError as exc:
+        raise SpeechExpressionIngressError(str(exc)) from exc
     if request.expression_id is None:
-        raise ValueError("speech expression identity is required")
+        raise SpeechExpressionIngressError("speech expression identity is required")
     return request
 
 
