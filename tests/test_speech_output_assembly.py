@@ -149,7 +149,7 @@ def test_output_only_assembly_ignores_capture_and_transcription_hardware(tmp_pat
     assert assembly.playback_resolution.accepted is True
     assert len(playback_calls) == 1
     assert assembly.speech_output_service is not None
-    assert assembly.retry_queue.pending_count == 0
+    assert assembly.retry_queue.status.queue.pending_count == 0
 
     assembly.close()
     assert synthesizer.closed is True
