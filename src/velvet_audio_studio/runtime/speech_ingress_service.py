@@ -17,6 +17,7 @@ from velvet_audio_studio.runtime.speech_expression_ingress import (
     SpeechExpressionIngressHandler,
     SpeechOutputSink,
     SqliteSpeechDeliveryLedger,
+    speech_output_request_from_envelope,
 )
 
 
@@ -46,6 +47,9 @@ def build_speech_ingress_components(
     The existing acknowledgement store and ingress queue own transport durability.
     The speech delivery ledger adds only the acoustic-attempt truth needed to
     prevent ambiguous replay. All three use the same SQLite database file.
+
+    Speech structure is validated once before acknowledgement and again before
+    acoustic dispatch. Invalid speech never enters the durable dispatch queue.
     """
 
     store = SqliteAcknowledgementStore(database)
@@ -55,6 +59,7 @@ def build_speech_ingress_components(
         health_path=health_path,
         max_request_bytes=max_request_bytes,
         bearer_token_file=bearer_token_file,
+        envelope_validator=lambda envelope: speech_output_request_from_envelope(envelope),
     )
     queue = SqliteIngressDispatchQueue(database)
     delivery_ledger = SqliteSpeechDeliveryLedger(database)
